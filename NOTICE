@@ -1,0 +1,9 @@
+RTA Captcha OCR includes a JavaScript port of EmbeddedOCRSolver and embedded
+glyph templates from:
+
+  rta-sales-client-go
+  https://github.com/Miku0139oao/rta-sales-client-go
+  revision 3a21e0ab9bb91d2ad033d226db6a372074f58e0e
+
+The upstream project is distributed under the MIT License. The applicable
+copyright and license text are reproduced in LICENSE.
