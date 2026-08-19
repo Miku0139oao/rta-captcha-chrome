@@ -15,29 +15,17 @@
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const AUTOFILL_MARKER = "rtaCaptchaOcrAutofilled";
 
-  const worker = startWorker();
+  let worker = null;
+  let workerUrl = "";
+  let workerFailed = false;
   let localSolver = null;
   let nextJobId = 1;
   const pendingJobs = new Map();
   let cache = { token: "", answer: "", error: null, job: null };
-
-  if (worker) {
-    worker.addEventListener("message", (event) => {
-      const message = event.data || {};
-      const pending = pendingJobs.get(message.id);
-      if (!pending) {
-        return;
-      }
-      pendingJobs.delete(message.id);
-      if (message.ok && ANSWER_PATTERN.test(message.answer)) {
-        pending.resolve(message.answer);
-        return;
-      }
-      const error = new Error(message.message || "ocr failed");
-      error.code = message.code;
-      pending.reject(error);
-    });
-  }
+  let observer = null;
+  let prefetchTimer = 0;
+  let idleTimer = 0;
+  const IDLE_RELEASE_MS = 20000;
 
   document.addEventListener("dblclick", onDoubleClick, true);
   document.addEventListener(
@@ -48,7 +36,9 @@
           delete event.target.dataset.rtaOcrIgnoreLoad;
           return;
         }
-        schedulePrefetch();
+        if (onLoginSurface()) {
+          schedulePrefetch();
+        }
       }
     },
     true,
@@ -66,32 +56,119 @@
     },
     true,
   );
-  const observer = new MutationObserver(schedulePrefetch);
-  observer.observe(document.documentElement, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["src"],
-  });
-  window.addEventListener("hashchange", () => {
-    cache = { token: "", answer: "", error: null, job: null };
-    schedulePrefetch();
-  });
-  schedulePrefetch();
-  window.setInterval(schedulePrefetch, 1200);
+  window.addEventListener("hashchange", onNavigation);
+  window.addEventListener("popstate", onNavigation);
+  onNavigation();
 
-  function startWorker() {
+  function onLoginSurface() {
+    const host = location.hostname.toLowerCase();
+    const hash = location.hash || "";
+    if (/sso|mansso/i.test(host) || /login|sso/i.test(hash)) {
+      return true;
+    }
+    return Boolean(findCaptchaImage());
+  }
+
+  function onNavigation() {
+    cache = { token: "", answer: "", error: null, job: null };
+    if (onLoginSurface()) {
+      ensureObserver();
+      schedulePrefetch();
+      return;
+    }
+    stopObserver();
+    releaseEngine();
+  }
+
+  function ensureObserver() {
+    if (observer || !document.documentElement) {
+      return;
+    }
+    observer = new MutationObserver(schedulePrefetch);
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["src"],
+    });
+  }
+
+  function stopObserver() {
+    if (!observer) {
+      return;
+    }
+    observer.disconnect();
+    observer = null;
+  }
+
+  function ensureWorker() {
+    if (worker || workerFailed) {
+      return worker;
+    }
     try {
-      return new Worker(URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" })));
+      workerUrl = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" }));
+      worker = new Worker(workerUrl);
+      worker.addEventListener("message", (event) => {
+        const message = event.data || {};
+        const pending = pendingJobs.get(message.id);
+        if (!pending) {
+          return;
+        }
+        pendingJobs.delete(message.id);
+        if (message.ok && ANSWER_PATTERN.test(message.answer)) {
+          pending.resolve(message.answer);
+          return;
+        }
+        const error = new Error(message.message || "ocr failed");
+        error.code = message.code;
+        pending.reject(error);
+      });
+      return worker;
     } catch {
+      workerFailed = true;
+      worker = null;
       return null;
     }
   }
 
+  function releaseEngine() {
+    window.clearTimeout(idleTimer);
+    idleTimer = 0;
+    for (const pending of pendingJobs.values()) {
+      pending.reject(new Error("ocr released"));
+    }
+    pendingJobs.clear();
+    if (worker) {
+      worker.terminate();
+      worker = null;
+    }
+    if (workerUrl) {
+      URL.revokeObjectURL(workerUrl);
+      workerUrl = "";
+    }
+    localSolver = null;
+  }
+
+  function bumpIdleRelease() {
+    window.clearTimeout(idleTimer);
+    idleTimer = window.setTimeout(() => {
+      releaseEngine();
+    }, IDLE_RELEASE_MS);
+  }
+
   function schedulePrefetch() {
-    window.setTimeout(() => {
-      void prefetchCurrentCaptcha();
-    }, 50);
+    if (!onLoginSurface()) {
+      return;
+    }
+    window.clearTimeout(prefetchTimer);
+    prefetchTimer = window.setTimeout(() => {
+      const run = () => void prefetchCurrentCaptcha();
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(run, { timeout: 400 });
+      } else {
+        run();
+      }
+    }, 200);
   }
 
   function imageToken(image) {
@@ -118,11 +195,13 @@
         if (cache.token === token) {
           cache = { token, answer, error: null, job: null };
         }
+        bumpIdleRelease();
       },
       (error) => {
         if (cache.token === token) {
           cache = { token, answer: "", error, job: null };
         }
+        bumpIdleRelease();
       },
     );
   }
@@ -136,16 +215,26 @@
   }
 
   function ocrPixels(pixels) {
-    if (worker) {
+    const activeWorker = ensureWorker();
+    if (activeWorker) {
       const id = nextJobId;
       nextJobId += 1;
-      const buffer = pixels.data.buffer.slice(0);
+      const buffer = pixels.data.buffer;
+      bumpIdleRelease();
       return new Promise((resolve, reject) => {
         pendingJobs.set(id, { resolve, reject });
-        worker.postMessage(
-          { id, width: pixels.width, height: pixels.height, buffer },
-          [buffer],
-        );
+        try {
+          activeWorker.postMessage(
+            { id, width: pixels.width, height: pixels.height, buffer },
+            [buffer],
+          );
+        } catch {
+          const copy = buffer.slice(0);
+          activeWorker.postMessage(
+            { id, width: pixels.width, height: pixels.height, buffer: copy },
+            [copy],
+          );
+        }
       });
     }
     return new Promise((resolve, reject) => {

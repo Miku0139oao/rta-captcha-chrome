@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.0.6
-// @description  驗證碼圖載入後在背景辨識；雙擊驗證碼欄只填入結果。不自動登入、不讀帳密。
+// @version      1.0.7
+// @description  僅在登入頁背景辨識驗證碼；雙擊輸入欄填入。閒置釋放 Worker。不自動登入。
 // @author       Miku0139oao
 // @license      MIT
 // @match        https://*.rta-os.com/*
