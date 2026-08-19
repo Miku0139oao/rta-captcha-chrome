@@ -107,7 +107,7 @@ test("credential and broad browsing APIs are not requested or called", async () 
 async function collectFiles(directory) {
   const files = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if ([".git", ".tmp", "coverage", "node_modules"].includes(entry.name)) {
+    if ([".git", ".tmp", "coverage", "node_modules", "tampermonkey"].includes(entry.name)) {
       continue;
     }
     const target = path.join(directory, entry.name);

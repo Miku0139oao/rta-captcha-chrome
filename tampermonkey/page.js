@@ -15,10 +15,44 @@
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const AUTOFILL_MARKER = "rtaCaptchaOcrAutofilled";
 
-  const solver = new EmbeddedOCRSolver();
-  let activeGeneration = 0;
+  const worker = startWorker();
+  let localSolver = null;
+  let nextJobId = 1;
+  const pendingJobs = new Map();
+  let cache = { token: "", answer: "", error: null, job: null };
+
+  if (worker) {
+    worker.addEventListener("message", (event) => {
+      const message = event.data || {};
+      const pending = pendingJobs.get(message.id);
+      if (!pending) {
+        return;
+      }
+      pendingJobs.delete(message.id);
+      if (message.ok && ANSWER_PATTERN.test(message.answer)) {
+        pending.resolve(message.answer);
+        return;
+      }
+      const error = new Error(message.message || "ocr failed");
+      error.code = message.code;
+      pending.reject(error);
+    });
+  }
 
   document.addEventListener("dblclick", onDoubleClick, true);
+  document.addEventListener(
+    "load",
+    (event) => {
+      if (event.target instanceof HTMLImageElement) {
+        if (event.target.dataset.rtaOcrIgnoreLoad === "1") {
+          delete event.target.dataset.rtaOcrIgnoreLoad;
+          return;
+        }
+        schedulePrefetch();
+      }
+    },
+    true,
+  );
   document.addEventListener(
     "input",
     (event) => {
@@ -32,6 +66,110 @@
     },
     true,
   );
+  const observer = new MutationObserver(schedulePrefetch);
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["src"],
+  });
+  window.addEventListener("hashchange", () => {
+    cache = { token: "", answer: "", error: null, job: null };
+    schedulePrefetch();
+  });
+  schedulePrefetch();
+  window.setInterval(schedulePrefetch, 1200);
+
+  function startWorker() {
+    try {
+      return new Worker(URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" })));
+    } catch {
+      return null;
+    }
+  }
+
+  function schedulePrefetch() {
+    window.setTimeout(() => {
+      void prefetchCurrentCaptcha();
+    }, 50);
+  }
+
+  function imageToken(image) {
+    const src = image.currentSrc || image.src || "";
+    return `${challengeUrl(image)}|${src}|${image.naturalWidth}x${image.naturalHeight}`;
+  }
+
+  function prefetchCurrentCaptcha() {
+    const image = findCaptchaImage();
+    if (!(image instanceof HTMLImageElement) || !image.complete || image.naturalWidth <= 0) {
+      return;
+    }
+    if (!challengeUrl(image)) {
+      return;
+    }
+    const token = imageToken(image);
+    if (cache.token === token && (cache.answer || cache.job || cache.error)) {
+      return;
+    }
+    const job = recognize(image, token);
+    cache = { token, answer: "", error: null, job };
+    void job.then(
+      (answer) => {
+        if (cache.token === token) {
+          cache = { token, answer, error: null, job: null };
+        }
+      },
+      (error) => {
+        if (cache.token === token) {
+          cache = { token, answer: "", error, job: null };
+        }
+      },
+    );
+  }
+
+  async function recognize(image, token) {
+    const pixels = await readVisiblePixels(image);
+    if (imageToken(image) !== token) {
+      throw new Error("captcha changed");
+    }
+    return ocrPixels(pixels);
+  }
+
+  function ocrPixels(pixels) {
+    if (worker) {
+      const id = nextJobId;
+      nextJobId += 1;
+      const buffer = pixels.data.buffer.slice(0);
+      return new Promise((resolve, reject) => {
+        pendingJobs.set(id, { resolve, reject });
+        worker.postMessage(
+          { id, width: pixels.width, height: pixels.height, buffer },
+          [buffer],
+        );
+      });
+    }
+    return new Promise((resolve, reject) => {
+      const run = () => {
+        try {
+          resolve(getLocalSolver().solve(pixels));
+        } catch (error) {
+          reject(error);
+        }
+      };
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(run, { timeout: 800 });
+      } else {
+        window.setTimeout(run, 0);
+      }
+    });
+  }
+
+  function getLocalSolver() {
+    if (!localSolver) {
+      localSolver = new Function(`${OCR_CORE}; return new EmbeddedOCRSolver();`)();
+    }
+    return localSolver;
+  }
 
   function onDoubleClick(event) {
     const target = event.target;
@@ -42,64 +180,40 @@
     const image = target.closest("img");
     const captchaInput = getCaptchaInput();
     const captchaImage = findCaptchaImage();
-    const hitInput = captchaInput && (target === captchaInput || captchaInput.contains(target) || input === captchaInput);
+    const hitInput =
+      captchaInput &&
+      (target === captchaInput || captchaInput.contains(target) || input === captchaInput);
     const hitImage = captchaImage && image === captchaImage;
     if (!hitInput && !hitImage) {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
-    void solveNow();
+    void fillCachedAnswer();
   }
 
-  function solveNow() {
+  async function fillCachedAnswer() {
     const image = findCaptchaImage();
     const input = getCaptchaInput();
-    if (!(image instanceof HTMLImageElement)) {
-      setStatus("找不到驗證碼圖片", "error");
+    if (!(image instanceof HTMLImageElement) || !input) {
       return;
     }
-    if (!input) {
-      setStatus("找不到驗證碼輸入欄", "error");
-      return;
-    }
-    if (!challengeUrl(image)) {
-      setStatus("驗證碼圖片網址無法辨識", "error");
-      return;
-    }
-    if (!image.complete || image.naturalWidth <= 0) {
-      setStatus("驗證碼圖片尚未載入完成", "error");
-      return;
-    }
-    activeGeneration += 1;
-    const generation = activeGeneration;
-    setStatus("正在辨識畫面上的驗證碼…");
-    void requestSolution(image, generation);
-  }
-
-  async function requestSolution(image, generation) {
+    const token = imageToken(image);
+    prefetchCurrentCaptcha();
     try {
-      const pixels = await readVisiblePixels(image);
-      if (generation !== activeGeneration) {
-        return;
+      let answer = cache.token === token ? cache.answer : "";
+      if (!answer && cache.token === token && cache.job) {
+        answer = await cache.job;
       }
-      const answer = solver.solve(pixels);
-      if (generation !== activeGeneration) {
-        return;
+      if (!answer) {
+        answer = await recognize(image, token);
+        cache = { token, answer, error: null, job: null };
       }
-      if (ANSWER_PATTERN.test(answer) && fillCaptchaInput(answer)) {
-        setStatus(`已填入 ${answer}（未送出登入）。不對就換圖後再雙擊。`, "ok");
+      if (ANSWER_PATTERN.test(answer) && imageToken(findCaptchaImage() || image) === token) {
+        fillCaptchaInput(answer);
       }
+    } catch {
       return;
-    } catch (error) {
-      if (generation !== activeGeneration) {
-        return;
-      }
-      if (error && error.code === "uncertain") {
-        setStatus("辨識不確定。請點驗證碼圖片換一張，再雙擊輸入欄。", "error");
-        return;
-      }
-      setStatus(`無法辨識：${error && error.message ? error.message : error}`, "error");
     }
   }
 
@@ -376,8 +490,4 @@
     } catch {
       return "";
     }
-  }
-
-  function setStatus() {
-    // No on-page overlay. Failures stay silent except the captcha field fill.
   }

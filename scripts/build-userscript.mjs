@@ -15,6 +15,30 @@ if (solver.includes("import ") || solver.includes("export ")) {
   throw new Error("solver.js still contains ESM import/export after rewrite");
 }
 
+const ocrCore = `${templates}\n${solver}`;
+const workerTail = `
+const solver = new EmbeddedOCRSolver();
+self.addEventListener("message", (event) => {
+  const message = event.data || {};
+  try {
+    const data = new Uint8ClampedArray(message.buffer);
+    const answer = solver.solve({
+      width: message.width,
+      height: message.height,
+      data,
+    });
+    self.postMessage({ id: message.id, ok: true, answer });
+  } catch (error) {
+    self.postMessage({
+      id: message.id,
+      ok: false,
+      code: error && error.code,
+      message: error && error.message ? error.message : String(error),
+    });
+  }
+});
+`;
+
 const header = (await readFile(path.join(root, "tampermonkey", "header.js"), "utf8")).trimEnd();
 const page = await readFile(path.join(root, "tampermonkey", "page.js"), "utf8");
 
@@ -22,10 +46,8 @@ const output = `${header}
 
 (function () {
   "use strict";
-
-${templates}
-
-${solver}
+  const OCR_CORE = ${JSON.stringify(ocrCore)};
+  const WORKER_SOURCE = OCR_CORE + ${JSON.stringify(workerTail)};
 
 ${page}
 })();
