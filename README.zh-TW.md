@@ -8,7 +8,17 @@
 
 ## 安裝
 
-目前**尚未出現在 Chrome 線上應用程式商店**（上架必須用你的 Google 帳號送審，步驟見 [STORE.md](STORE.md)）。沒有需要編譯的步驟。倉庫根目錄裡的 `manifest.json` 就是擴充功能；下載後用 Chrome「載入未封裝項目」即可。
+### 方法零：Tampermonkey（Edge / Chrome 都適用，最簡單）
+
+1. 先裝 [Tampermonkey](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd)（Edge）或 [Chrome 版](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)。
+2. 打開這支腳本的 Raw 頁，Tampermonkey 會跳出安裝：  
+   https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
+3. 按「安裝」。
+4. 開啟 `https://sso.rta-os.com/` 登入頁。驗證碼圖片出現後會自動填入；登入仍由你送出。
+
+Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次向 `mansso.rta-os.com` 取圖時，Tampermonkey 可能問你是否允許網域，選允許。
+
+目前**尚未出現在 Chrome 線上應用程式商店**（上架必須用你的 Google 帳號送審，步驟見 [STORE.md](STORE.md)）。若要改裝成擴充功能：沒有需要編譯的步驟。倉庫根目錄裡的 `manifest.json` 就是擴充功能；下載後用 Chrome「載入未封裝項目」即可。
 
 ### 方法一：下載 Release zip（不用 git、不用 Node）
 

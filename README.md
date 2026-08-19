@@ -8,7 +8,17 @@ The extension fills only `input#verifyCode[name="input-verify_code"]`. It does n
 
 ## Install
 
-This is **not yet listed** on the Chrome Web Store (publishing has to be submitted from your Google account; see [STORE.md](STORE.md)). There is **no compile step**. `manifest.json` in the repository root is the extension. Download it and load it unpacked.
+### Tampermonkey (easiest on Edge and Chrome)
+
+1. Install [Tampermonkey for Edge](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd) or [for Chrome](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo).
+2. Open the raw userscript; Tampermonkey prompts to install:  
+   https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
+3. Click **Install**.
+4. Open `https://sso.rta-os.com/`. When the captcha image appears, the script fills the field. You still submit the login yourself.
+
+Violentmonkey and ScriptCat can install the same `.user.js`. Tampermonkey may ask to allow `mansso.rta-os.com` on the first fetch; allow it.
+
+This is **not yet listed** on the Chrome Web Store (publishing has to be submitted from your Google account; see [STORE.md](STORE.md)). To load it as an extension instead, there is **no compile step**. `manifest.json` in the repository root is the extension. Download it and load it unpacked.
 
 ### Option 1: Release zip (no git, no Node)
 

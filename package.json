@@ -6,9 +6,10 @@
   "description": "Dependency-free Chrome MV3 extension for local RTA captcha OCR",
   "scripts": {
     "generate:templates": "node scripts/generate-template-data.mjs",
+    "build:userscript": "node scripts/build-userscript.mjs",
     "test": "node --test",
     "check:syntax": "node scripts/check-syntax.mjs",
-    "verify": "npm run check:syntax && npm test"
+    "verify": "npm run check:syntax && npm run build:userscript && npm test"
   },
   "engines": {
     "node": ">=22"
