@@ -14,7 +14,7 @@ The extension fills only `input#verifyCode[name="input-verify_code"]`. It does n
 2. Open the raw userscript; Tampermonkey prompts to install:  
    https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
 3. Click **Install**.
-4. Open `https://sso.rta-os.com/`. When the captcha image appears, the script fills the field. You still submit the login yourself.
+4. Open the partner/SSO login page. Double-click the captcha input to solve it. The script does not run automatically. You still submit the login yourself.
 
 Violentmonkey and ScriptCat can install the same `.user.js`. Tampermonkey may ask to allow `mansso.rta-os.com` on the first fetch; allow it.
 

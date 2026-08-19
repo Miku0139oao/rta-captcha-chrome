@@ -17,6 +17,7 @@ test("userscript has a Tampermonkey header and local OCR solver", () => {
   assert.match(userscript, /@connect\s+sso\.rta-os\.com/);
   assert.match(userscript, /@grant\s+GM_xmlhttpRequest/);
   assert.match(userscript, /class EmbeddedOCRSolver/);
+  assert.match(userscript, /dblclick/);
   assert.match(userscript, /img#verifyCodeMsg/);
   assert.match(userscript, /input-verify_code/);
   assert.doesNotMatch(userscript, /^import /m);

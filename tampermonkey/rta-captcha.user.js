@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.0.3
-// @description  在 RTA 登入頁（含 partner 跳轉、SSO iframe）以本機 OCR 填入五碼驗證碼。不讀帳密、不送出登入。
+// @version      1.0.4
+// @description  雙擊 RTA 驗證碼欄，以本機 OCR 填入五碼驗證碼。不自動執行、不讀帳密、不送出登入。
 // @author       Miku0139oao
 // @license      MIT
 // @match        https://*.rta-os.com/*
@@ -1271,64 +1271,15 @@ const __testing = Object.freeze({
   ];
   const FLAG_PATTERN = /^[0-9a-f]{32}$/i;
   const ANSWER_PATTERN = /^[0-9a-f]{5}$/;
-  const MAX_AUTOMATIC_REFRESHES = 4;
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const AUTOFILL_MARKER = "rtaCaptchaOcrAutofilled";
 
   const solver = new EmbeddedOCRSolver();
-  let lastSolvedToken = "";
   let activeGeneration = 0;
-  let automaticRefreshes = 0;
-  let scanQueued = false;
   let statusNode = null;
 
-  setStatus("RTA OCR 已載入，等待驗證碼…");
-  const observer = new MutationObserver(queueScan);
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["src", "style", "class"],
-    childList: true,
-    subtree: true,
-  });
-  window.addEventListener("hashchange", () => {
-    lastSolvedToken = "";
-    automaticRefreshes = 0;
-    queueScan();
-  });
-  window.addEventListener("popstate", () => queueScan());
-  document.addEventListener(
-    "load",
-    (event) => {
-      if (!(event.target instanceof HTMLImageElement)) {
-        return;
-      }
-      const image = event.target;
-      if (image.dataset.rtaOcrIgnoreLoad === "1") {
-        delete image.dataset.rtaOcrIgnoreLoad;
-        return;
-      }
-      if (findCaptchaImage() === image || challengeUrl(image)) {
-        lastSolvedToken = "";
-        queueScan();
-      }
-    },
-    true,
-  );
-  document.addEventListener(
-    "click",
-    (event) => {
-      const image = event.target instanceof HTMLImageElement ? event.target : event.target.closest?.("img");
-      if (!image || findCaptchaImage() !== image) {
-        return;
-      }
-      automaticRefreshes = 0;
-      lastSolvedToken = "";
-      delete image.dataset.rtaOcrOriginal;
-      clearPreviousAutofill(getCaptchaInput());
-      setStatus("驗證碼已刷新，等待新圖…");
-    },
-    true,
-  );
+  setStatus("RTA OCR 待命：雙擊驗證碼欄開始辨識");
+  document.addEventListener("dblclick", onDoubleClick, true);
   document.addEventListener(
     "input",
     (event) => {
@@ -1342,53 +1293,47 @@ const __testing = Object.freeze({
     },
     true,
   );
-  queueScan();
-  window.setInterval(queueScan, 1500);
 
-  function queueScan() {
-    if (scanQueued) {
+  function onDoubleClick(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) {
       return;
     }
-    scanQueued = true;
-    window.setTimeout(() => {
-      scanQueued = false;
-      scanForCaptcha();
-    }, 80);
+    const input = target.closest("input") || getCaptchaInput();
+    const image = target.closest("img");
+    const captchaInput = getCaptchaInput();
+    const captchaImage = findCaptchaImage();
+    const hitInput = captchaInput && (target === captchaInput || captchaInput.contains(target) || input === captchaInput);
+    const hitImage = captchaImage && image === captchaImage;
+    if (!hitInput && !hitImage) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void solveNow();
   }
 
-  function imageToken(image) {
-    const src = image.currentSrc || image.src || "";
-    return `${challengeUrl(image)}|${src}|${image.naturalWidth}x${image.naturalHeight}`;
-  }
-
-  function scanForCaptcha() {
+  function solveNow() {
     const image = findCaptchaImage();
     const input = getCaptchaInput();
     if (!(image instanceof HTMLImageElement)) {
+      setStatus("找不到驗證碼圖片", "error");
       return;
     }
     if (!input) {
-      setStatus("找到驗證碼圖，但還沒找到輸入欄");
+      setStatus("找不到驗證碼輸入欄", "error");
       return;
     }
     if (!challengeUrl(image)) {
-      setStatus("驗證碼圖片網址無法辨識");
+      setStatus("驗證碼圖片網址無法辨識", "error");
       return;
     }
     if (!image.complete || image.naturalWidth <= 0) {
-      return;
-    }
-    const token = imageToken(image);
-    if (token === lastSolvedToken) {
-      return;
-    }
-    if (input.value.trim() !== "" && input.dataset[AUTOFILL_MARKER] !== "true") {
-      setStatus("驗證碼欄已有手動輸入，略過");
+      setStatus("驗證碼圖片尚未載入完成", "error");
       return;
     }
     activeGeneration += 1;
     const generation = activeGeneration;
-    clearPreviousAutofill(input);
     setStatus("正在辨識畫面上的驗證碼…");
     void requestSolution(image, generation);
   }
@@ -1404,9 +1349,7 @@ const __testing = Object.freeze({
         return;
       }
       if (ANSWER_PATTERN.test(answer) && fillCaptchaInput(answer)) {
-        lastSolvedToken = imageToken(image);
-        automaticRefreshes = 0;
-        setStatus(`已填入 ${answer}（對應目前畫面，未送出登入）`, "ok");
+        setStatus(`已填入 ${answer}（未送出登入）。不對就換圖後再雙擊。`, "ok");
       }
       return;
     } catch (error) {
@@ -1414,13 +1357,10 @@ const __testing = Object.freeze({
         return;
       }
       if (error && error.code === "uncertain") {
-        lastSolvedToken = imageToken(image);
-        setStatus("辨識不確定，正在換圖…");
-        refreshCaptcha(image);
+        setStatus("辨識不確定。請點驗證碼圖片換一張，再雙擊輸入欄。", "error");
         return;
       }
       setStatus(`無法辨識：${error && error.message ? error.message : error}`, "error");
-      refreshCaptcha(image);
     }
   }
 
@@ -1642,25 +1582,11 @@ const __testing = Object.freeze({
     if (!input || !ANSWER_PATTERN.test(answer)) {
       return false;
     }
-    const wasAutofilled = input.dataset[AUTOFILL_MARKER] === "true";
-    if (input.value.trim() !== "" && !wasAutofilled) {
-      return false;
-    }
     setInputValue(input, answer);
     input.dataset[AUTOFILL_MARKER] = "true";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
-  }
-
-  function clearPreviousAutofill(input) {
-    if (!input || input.dataset[AUTOFILL_MARKER] !== "true") {
-      return;
-    }
-    setInputValue(input, "");
-    delete input.dataset[AUTOFILL_MARKER];
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   function setInputValue(input, value) {
@@ -1669,20 +1595,6 @@ const __testing = Object.freeze({
       descriptor.set.call(input, value);
     } else {
       input.value = value;
-    }
-  }
-
-  function refreshCaptcha(image) {
-    if (automaticRefreshes >= MAX_AUTOMATIC_REFRESHES || !image.isConnected) {
-      setStatus("多次不確定，請手動點驗證碼換圖", "error");
-      return;
-    }
-    automaticRefreshes += 1;
-    lastSolvedToken = "";
-    delete image.dataset.rtaOcrOriginal;
-    const clickTarget = document.getElementById("verifyCodeMsg") || image;
-    if (typeof clickTarget.click === "function") {
-      clickTarget.click();
     }
   }
 
