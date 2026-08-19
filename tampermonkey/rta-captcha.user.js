@@ -1,17 +1,19 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.0.1
-// @description  在 RTA SSO 登入頁以本機 OCR 填入五碼驗證碼。不讀帳密、不送出登入。
+// @version      1.0.2
+// @description  在 RTA 登入頁（含 partner 跳轉、SSO iframe）以本機 OCR 填入五碼驗證碼。不讀帳密、不送出登入。
 // @author       Miku0139oao
 // @license      MIT
-// @match        https://sso.rta-os.com/*
-// @match        https://mansso.rta-os.com/*
+// @match        https://*.rta-os.com/*
+// @match        https://rta-os.com/*
+// @connect      sso.rta-os.com
 // @connect      mansso.rta-os.com
+// @connect      partner.rta-os.com
+// @connect      *
 // @grant        GM_xmlhttpRequest
 // @grant        GM.xmlHttpRequest
 // @run-at       document-idle
-// @noframes
 // @homepageURL  https://github.com/Miku0139oao/rta-captcha-chrome
 // @supportURL   https://github.com/Miku0139oao/rta-captcha-chrome/issues
 // @downloadURL  https://raw.githubusercontent.com/Miku0139oao/rta-captcha-chrome/main/tampermonkey/rta-captcha.user.js
@@ -1255,11 +1257,19 @@ const __testing = Object.freeze({
 });
 
 
-  const CAPTCHA_IMAGE_SELECTOR = "img#verifyCodeMsg";
-  const CAPTCHA_INPUT_SELECTOR = 'input#verifyCode[name="input-verify_code"]';
-  const CAPTCHA_ORIGIN = "https://mansso.rta-os.com";
-  const CAPTCHA_PATH = "/getVerifyCodeImg";
-  const CAPTCHA_FLAG_PATTERN = /^[0-9a-f]{32}$/i;
+  const IMAGE_SELECTORS = [
+    "img#verifyCodeMsg",
+    'img[src*="getVerifyCodeImg"]',
+    'img[src*="verifyCodeFlag"]',
+  ];
+  const INPUT_SELECTORS = [
+    'input#verifyCode[name="input-verify_code"]',
+    "input#verifyCode",
+    'input[name="input-verify_code"]',
+    'input[name="verifyCode"]',
+    "input#verifycode",
+  ];
+  const FLAG_PATTERN = /^[0-9a-f]{32}$/i;
   const ANSWER_PATTERN = /^[0-9a-f]{5}$/;
   const MAX_AUTOMATIC_REFRESHES = 4;
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -1270,22 +1280,26 @@ const __testing = Object.freeze({
   let activeGeneration = 0;
   let automaticRefreshes = 0;
   let scanQueued = false;
+  let statusNode = null;
 
+  setStatus("RTA OCR 已載入，等待驗證碼…");
   const observer = new MutationObserver(queueScan);
   observer.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["src"],
+    attributeFilter: ["src", "style", "class"],
     childList: true,
     subtree: true,
   });
   window.addEventListener("hashchange", () => {
     lastRequestedUrl = "";
+    automaticRefreshes = 0;
     queueScan();
   });
+  window.addEventListener("popstate", () => queueScan());
   document.addEventListener(
     "load",
     (event) => {
-      if (event.target instanceof HTMLImageElement && event.target.matches(CAPTCHA_IMAGE_SELECTOR)) {
+      if (event.target instanceof HTMLImageElement) {
         queueScan();
       }
     },
@@ -1294,11 +1308,8 @@ const __testing = Object.freeze({
   document.addEventListener(
     "click",
     (event) => {
-      if (
-        event.isTrusted &&
-        event.target instanceof HTMLImageElement &&
-        event.target.matches(CAPTCHA_IMAGE_SELECTOR)
-      ) {
+      const image = event.target instanceof HTMLImageElement ? event.target : null;
+      if (event.isTrusted && image && findCaptchaImage() === image) {
         automaticRefreshes = 0;
       }
     },
@@ -1310,7 +1321,7 @@ const __testing = Object.freeze({
       if (
         event.isTrusted &&
         event.target instanceof HTMLInputElement &&
-        event.target.matches(CAPTCHA_INPUT_SELECTOR)
+        event.target === getCaptchaInput()
       ) {
         delete event.target.dataset[AUTOFILL_MARKER];
       }
@@ -1318,69 +1329,143 @@ const __testing = Object.freeze({
     true,
   );
   queueScan();
+  window.setInterval(queueScan, 1500);
 
   function queueScan() {
     if (scanQueued) {
       return;
     }
     scanQueued = true;
-    queueMicrotask(() => {
+    window.setTimeout(() => {
       scanQueued = false;
       scanForCaptcha();
-    });
+    }, 80);
   }
 
   function scanForCaptcha() {
-    const image = document.querySelector(CAPTCHA_IMAGE_SELECTOR);
+    const image = findCaptchaImage();
     const input = getCaptchaInput();
-    if (!(image instanceof HTMLImageElement) || !input) {
+    if (!(image instanceof HTMLImageElement)) {
+      return;
+    }
+    if (!input) {
+      setStatus("找到驗證碼圖，但還沒找到輸入欄");
       return;
     }
     const imageUrl = validatedCaptchaUrl(image.currentSrc || image.src);
-    if (!imageUrl || !image.complete || image.naturalWidth <= 0) {
+    if (!imageUrl) {
+      setStatus("驗證碼圖片網址無法辨識");
+      return;
+    }
+    if (!image.complete || image.naturalWidth <= 0) {
       return;
     }
     if (imageUrl === lastRequestedUrl) {
       return;
     }
     if (input.value.trim() !== "" && input.dataset[AUTOFILL_MARKER] !== "true") {
+      setStatus("驗證碼欄已有手動輸入，略過");
       return;
     }
     lastRequestedUrl = imageUrl;
     activeGeneration += 1;
     const generation = activeGeneration;
     clearPreviousAutofill(input);
+    setStatus("正在辨識驗證碼…");
     void requestSolution(image, imageUrl, generation);
   }
 
   async function requestSolution(image, imageUrl, generation) {
     let reason = "unreadable";
     try {
-      const bytes = await fetchCaptchaBytes(imageUrl);
+      const bytes = await loadCaptchaBytes(image, imageUrl);
       const pixels = await bytesToImageData(bytes);
       const answer = solver.solve(pixels);
-      if (
-        generation !== activeGeneration ||
-        validatedCaptchaUrl(image.currentSrc || image.src) !== imageUrl
-      ) {
+      if (generation !== activeGeneration || captchaFingerprint(image) !== imageUrl) {
         return;
       }
       if (ANSWER_PATTERN.test(answer) && fillCaptchaInput(answer)) {
         automaticRefreshes = 0;
+        setStatus(`已填入 ${answer}（未送出登入）`, "ok");
       }
       return;
     } catch (error) {
       reason = error && error.code === "uncertain" ? "uncertain" : "unreadable";
+      if (reason === "uncertain") {
+        setStatus("辨識不確定，正在換圖…");
+      } else {
+        setStatus(`無法辨識：${error && error.message ? error.message : error}`, "error");
+      }
     }
-    if (
-      generation !== activeGeneration ||
-      validatedCaptchaUrl(image.currentSrc || image.src) !== imageUrl
-    ) {
+    if (generation !== activeGeneration || captchaFingerprint(image) !== imageUrl) {
       return;
     }
-    if (reason === "uncertain" || reason === "unreadable") {
-      refreshCaptcha(image);
+    refreshCaptcha(image);
+  }
+
+  function findCaptchaImage() {
+    for (const selector of IMAGE_SELECTORS) {
+      const image = document.querySelector(selector);
+      if (image instanceof HTMLImageElement && isVisible(image)) {
+        return image;
+      }
     }
+    for (const image of document.images) {
+      if (!(image instanceof HTMLImageElement) || !isVisible(image)) {
+        continue;
+      }
+      const blob = `${image.currentSrc || ""} ${image.src || ""} ${image.id} ${image.className} ${image.alt || ""}`;
+      if (/getVerifyCodeImg|verifyCodeFlag|verifyCodeMsg|驗證碼|验证码/i.test(blob)) {
+        return image;
+      }
+    }
+    return null;
+  }
+
+  function getCaptchaInput() {
+    for (const selector of INPUT_SELECTORS) {
+      const input = document.querySelector(selector);
+      if (isUsableCaptchaInput(input)) {
+        return input;
+      }
+    }
+    for (const input of document.querySelectorAll("input")) {
+      if (!isUsableCaptchaInput(input)) {
+        continue;
+      }
+      const blob = `${input.name} ${input.id} ${input.className} ${input.placeholder || ""} ${input.getAttribute("aria-label") || ""}`;
+      if (/verify|captcha|驗證碼|验证码|驗証/i.test(blob)) {
+        return input;
+      }
+    }
+    return null;
+  }
+
+  function isUsableCaptchaInput(input) {
+    if (!(input instanceof HTMLInputElement) || !isVisible(input) || input.disabled) {
+      return false;
+    }
+    const type = (input.type || "text").toLowerCase();
+    if (type === "password" || type === "hidden" || type === "email" || type === "submit") {
+      return false;
+    }
+    const auto = (input.autocomplete || "").toLowerCase();
+    if (auto === "current-password" || auto === "new-password") {
+      return false;
+    }
+    return true;
+  }
+
+  function isVisible(element) {
+    if (!element || !element.isConnected) {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
   }
 
   function gmRequest() {
@@ -1391,6 +1476,18 @@ const __testing = Object.freeze({
       return GM.xmlHttpRequest;
     }
     return null;
+  }
+
+  async function loadCaptchaBytes(image, imageUrl) {
+    try {
+      return await fetchCaptchaBytes(imageUrl);
+    } catch (fetchError) {
+      try {
+        return await canvasBytes(image);
+      } catch {
+        throw fetchError;
+      }
+    }
   }
 
   function fetchCaptchaBytes(url) {
@@ -1435,6 +1532,32 @@ const __testing = Object.freeze({
     });
   }
 
+  async function canvasBytes(image) {
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (width < 8 || height < 16) {
+      throw new Error("captcha image is too small");
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      throw new Error("canvas 2d context is unavailable");
+    }
+    context.drawImage(image, 0, 0);
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((value) => {
+        if (value) {
+          resolve(value);
+        } else {
+          reject(new Error("canvas is tainted"));
+        }
+      }, "image/png");
+    });
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+
   function hasImageSignature(bytes) {
     const jpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
     const png =
@@ -1471,20 +1594,6 @@ const __testing = Object.freeze({
     }
   }
 
-  function getCaptchaInput() {
-    const input = document.querySelector(CAPTCHA_INPUT_SELECTOR);
-    if (
-      !(input instanceof HTMLInputElement) ||
-      input.id !== "verifyCode" ||
-      input.name !== "input-verify_code" ||
-      input.type.toLowerCase() !== "text" ||
-      ["current-password", "new-password"].includes((input.autocomplete || "").toLowerCase())
-    ) {
-      return null;
-    }
-    return input;
-  }
-
   function fillCaptchaInput(answer) {
     const input = getCaptchaInput();
     if (!input || !ANSWER_PATTERN.test(answer)) {
@@ -1502,7 +1611,7 @@ const __testing = Object.freeze({
   }
 
   function clearPreviousAutofill(input) {
-    if (input.dataset[AUTOFILL_MARKER] !== "true") {
+    if (!input || input.dataset[AUTOFILL_MARKER] !== "true") {
       return;
     }
     setInputValue(input, "");
@@ -1521,39 +1630,73 @@ const __testing = Object.freeze({
   }
 
   function refreshCaptcha(image) {
-    if (
-      automaticRefreshes >= MAX_AUTOMATIC_REFRESHES ||
-      !image.isConnected ||
-      !image.matches(CAPTCHA_IMAGE_SELECTOR)
-    ) {
+    if (automaticRefreshes >= MAX_AUTOMATIC_REFRESHES || !image.isConnected) {
+      setStatus("多次不確定，請手動點驗證碼換圖", "error");
       return;
     }
     automaticRefreshes += 1;
-    image.click();
+    lastRequestedUrl = "";
+    const clickTarget = document.getElementById("verifyCodeMsg") || image;
+    if (typeof clickTarget.click === "function") {
+      clickTarget.click();
+    }
+  }
+
+  function captchaFingerprint(image) {
+    return validatedCaptchaUrl(image.currentSrc || image.src);
   }
 
   function validatedCaptchaUrl(value) {
+    if (!value) {
+      return "";
+    }
     try {
       const url = new URL(value, location.href);
-      const keys = [...url.searchParams.keys()];
-      const flags = url.searchParams.getAll("verifyCodeFlag");
-      if (
-        url.origin !== CAPTCHA_ORIGIN ||
-        url.pathname !== CAPTCHA_PATH ||
-        url.username !== "" ||
-        url.password !== "" ||
-        url.hash !== "" ||
-        keys.length !== 1 ||
-        keys[0] !== "verifyCodeFlag" ||
-        flags.length !== 1 ||
-        !CAPTCHA_FLAG_PATTERN.test(flags[0])
-      ) {
+      if (url.protocol !== "https:") {
+        return "";
+      }
+      if (!/(^|\.)rta-os\.com$/i.test(url.hostname)) {
+        return "";
+      }
+      const flag = url.searchParams.get("verifyCodeFlag");
+      const looksLikeCaptcha =
+        /getVerifyCodeImg/i.test(`${url.pathname}${url.search}`) || Boolean(flag);
+      if (!looksLikeCaptcha) {
+        return "";
+      }
+      if (flag && !FLAG_PATTERN.test(flag)) {
         return "";
       }
       return url.href;
     } catch {
       return "";
     }
+  }
+
+  function setStatus(text, tone) {
+    if (!document.body) {
+      return;
+    }
+    if (!statusNode || !statusNode.isConnected) {
+      statusNode = document.createElement("div");
+      statusNode.id = "rta-captcha-ocr-status";
+      statusNode.style.cssText = [
+        "position:fixed",
+        "right:12px",
+        "bottom:12px",
+        "z-index:2147483647",
+        "max-width:360px",
+        "padding:8px 10px",
+        "border-radius:8px",
+        "font:12px/1.4 sans-serif",
+        "box-shadow:0 2px 10px rgba(15,23,42,.18)",
+        "pointer-events:none",
+      ].join(";");
+      document.body.appendChild(statusNode);
+    }
+    statusNode.textContent = text;
+    statusNode.style.background = tone === "error" ? "#fef3c7" : tone === "ok" ? "#dcfce7" : "#e2e8f0";
+    statusNode.style.color = "#0f172a";
   }
 
 })();

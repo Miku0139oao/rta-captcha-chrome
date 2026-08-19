@@ -14,7 +14,8 @@
 2. 打開這支腳本的 Raw 頁，Tampermonkey 會跳出安裝：  
    https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
 3. 按「安裝」。
-4. 開啟 `https://sso.rta-os.com/` 登入頁。驗證碼圖片出現後會自動填入；登入仍由你送出。
+4. 從 `https://partner.rta-os.com/` 進入登入（會跳轉 SSO / iframe 也可以）。右下角應出現「RTA OCR 已載入」。驗證碼圖片出現後會自動填入；登入仍由你送出。
+5. 若已安裝舊版腳本，到 Tampermonkey 儀表板刪除後，再打開上面的 Raw 連結重裝（版本需為 1.0.2）。
 
 Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次向 `mansso.rta-os.com` 取圖時，Tampermonkey 可能問你是否允許網域，選允許。
 
