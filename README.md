@@ -6,17 +6,30 @@ A loadable Chrome Manifest V3 extension that reads the RTA SSO login captcha **o
 
 The extension fills only `input#verifyCode[name="input-verify_code"]`. It does not read the account or password fields, does not submit the login form, and does not store credentials.
 
-## Install (unpacked)
+## Install
 
-This project is not listed on the Chrome Web Store. Load it unpacked:
+This is **not** on the Chrome Web Store, and there is **no compile step**. `manifest.json` in the repository root is the extension. Download it and load it unpacked.
 
-1. Clone this repository.
-2. Open `chrome://extensions/`.
-3. Turn on **Developer mode**.
-4. Click **Load unpacked** and select this repository root (the folder that contains `manifest.json`).
-5. Open `https://sso.rta-os.com/` and wait for the captcha image. When the solver is confident it fills the captcha field; you still confirm and submit the login yourself.
+### Option 1: Release zip (no git, no Node)
 
-There is no runtime `npm install` and no build step. The repository root **is** the extension.
+1. Open [Releases](https://github.com/Miku0139oao/rta-captcha-chrome/releases) and download the latest `rta-captcha-chrome-*.zip`.
+2. Extract it. You must see `manifest.json` inside the extracted folder.
+3. Go to `chrome://extensions/`.
+4. Turn on **Developer mode**.
+5. Click **Load unpacked** and select the **extracted folder** (not the zip file).
+6. Open `https://sso.rta-os.com/`. When the captcha image loads, the extension fills the captcha field if it is confident. You still confirm and submit the login yourself.
+
+Microsoft Edge is the same: `edge://extensions/` → Developer mode → Load unpacked.
+
+To update later, download a new zip, overwrite the extracted folder, and click Reload on the extensions page.
+
+### Option 2: Clone the source
+
+```powershell
+git clone https://github.com/Miku0139oao/rta-captcha-chrome.git
+```
+
+Then follow steps 3–6 above and select the cloned repository root. Do not run `npm install` or a build; the checkout is already the extension.
 
 ## How it works
 

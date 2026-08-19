@@ -8,12 +8,28 @@
 
 ## 安裝
 
-1. 開啟 `chrome://extensions/`。
-2. 啟用「開發人員模式」。
-3. 選擇「載入未封裝項目」，指定本專案根目錄（包含 `manifest.json` 的目錄）。
-4. 開啟 `https://sso.rta-os.com/` 的登入頁。驗證碼圖片載入完成後，擴充功能會在本機辨識並填入驗證碼欄位；登入仍由使用者自行確認及送出。
+這不是 Chrome 線上應用程式商店的套件，也**沒有需要編譯的步驟**。倉庫根目錄裡的 `manifest.json` 就是擴充功能；下載後用 Chrome「載入未封裝項目」即可。
 
-本專案沒有執行期套件，也沒有建置步驟；根目錄本身就是可載入的擴充功能。
+### 方法一：下載 Release zip（不用 git、不用 Node）
+
+1. 打開 [Releases](https://github.com/Miku0139oao/rta-captcha-chrome/releases) ，下載最新的 `rta-captcha-chrome-*.zip`。
+2. 解壓縮到任意資料夾。解出來的目錄裡必須看得到 `manifest.json`。
+3. Chrome 網址列輸入 `chrome://extensions/` 後 Enter。
+4. 右上角打開「開發人員模式」。
+5. 按「載入未封裝項目」，選**解壓縮後的那個資料夾**（不要選 zip 檔本身）。
+6. 開啟 `https://sso.rta-os.com/` 登入頁。驗證碼圖片載入後，擴充功能會在本機辨識並填入驗證碼欄位；登入仍由你自己確認後送出。
+
+Microsoft Edge 相同：`edge://extensions/` → 開發人員模式 → 載入未封裝的項目。
+
+之後若擴充功能更新，再下載新的 zip、覆蓋解壓目錄，然後在擴充功能頁按重新整理。
+
+### 方法二：clone 原始碼
+
+```powershell
+git clone https://github.com/Miku0139oao/rta-captcha-chrome.git
+```
+
+然後依方法一的第 3–6 步，選 clone 下來的倉庫根目錄（含 `manifest.json` 的那層）。不必執行 `npm install` 或任何 build。
 
 ## MV3 架構
 
