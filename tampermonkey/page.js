@@ -17,9 +17,7 @@
 
   const solver = new EmbeddedOCRSolver();
   let activeGeneration = 0;
-  let statusNode = null;
 
-  setStatus("RTA OCR 待命：雙擊驗證碼欄開始辨識");
   document.addEventListener("dblclick", onDoubleClick, true);
   document.addEventListener(
     "input",
@@ -380,28 +378,6 @@
     }
   }
 
-  function setStatus(text, tone) {
-    if (!document.body) {
-      return;
-    }
-    if (!statusNode || !statusNode.isConnected) {
-      statusNode = document.createElement("div");
-      statusNode.id = "rta-captcha-ocr-status";
-      statusNode.style.cssText = [
-        "position:fixed",
-        "right:12px",
-        "bottom:12px",
-        "z-index:2147483647",
-        "max-width:360px",
-        "padding:8px 10px",
-        "border-radius:8px",
-        "font:12px/1.4 sans-serif",
-        "box-shadow:0 2px 10px rgba(15,23,42,.18)",
-        "pointer-events:none",
-      ].join(";");
-      document.body.appendChild(statusNode);
-    }
-    statusNode.textContent = text;
-    statusNode.style.background = tone === "error" ? "#fef3c7" : tone === "ok" ? "#dcfce7" : "#e2e8f0";
-    statusNode.style.color = "#0f172a";
+  function setStatus() {
+    // No on-page overlay. Failures stay silent except the captcha field fill.
   }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.0.4
+// @version      1.0.5
 // @description  雙擊 RTA 驗證碼欄，以本機 OCR 填入五碼驗證碼。不自動執行、不讀帳密、不送出登入。
 // @author       Miku0139oao
 // @license      MIT
