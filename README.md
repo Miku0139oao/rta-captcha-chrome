@@ -19,7 +19,12 @@ This is **not** on the Chrome Web Store, and there is **no compile step**. `mani
 5. Click **Load unpacked** and select the **extracted folder** (not the zip file).
 6. Open `https://sso.rta-os.com/`. When the captcha image loads, the extension fills the captcha field if it is confident. You still confirm and submit the login yourself.
 
-Microsoft Edge is the same: `edge://extensions/` → Developer mode → Load unpacked.
+Microsoft Edge uses different button labels for the same flow:
+
+1. Open `edge://extensions/`
+2. Turn on **Developer mode** on the left
+3. Click **Load unpacked** (Traditional Chinese UI: **載入解壓縮**)
+4. Select the **extracted folder that contains `manifest.json`**, not the `.zip` file
 
 To update later, download a new zip, overwrite the extracted folder, and click Reload on the extensions page.
 
