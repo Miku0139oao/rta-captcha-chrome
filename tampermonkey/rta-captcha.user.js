@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.0.2
+// @version      1.0.3
 // @description  在 RTA 登入頁（含 partner 跳轉、SSO iframe）以本機 OCR 填入五碼驗證碼。不讀帳密、不送出登入。
 // @author       Miku0139oao
 // @license      MIT
@@ -1276,7 +1276,7 @@ const __testing = Object.freeze({
   const AUTOFILL_MARKER = "rtaCaptchaOcrAutofilled";
 
   const solver = new EmbeddedOCRSolver();
-  let lastRequestedUrl = "";
+  let lastSolvedToken = "";
   let activeGeneration = 0;
   let automaticRefreshes = 0;
   let scanQueued = false;
@@ -1291,7 +1291,7 @@ const __testing = Object.freeze({
     subtree: true,
   });
   window.addEventListener("hashchange", () => {
-    lastRequestedUrl = "";
+    lastSolvedToken = "";
     automaticRefreshes = 0;
     queueScan();
   });
@@ -1299,7 +1299,16 @@ const __testing = Object.freeze({
   document.addEventListener(
     "load",
     (event) => {
-      if (event.target instanceof HTMLImageElement) {
+      if (!(event.target instanceof HTMLImageElement)) {
+        return;
+      }
+      const image = event.target;
+      if (image.dataset.rtaOcrIgnoreLoad === "1") {
+        delete image.dataset.rtaOcrIgnoreLoad;
+        return;
+      }
+      if (findCaptchaImage() === image || challengeUrl(image)) {
+        lastSolvedToken = "";
         queueScan();
       }
     },
@@ -1308,10 +1317,15 @@ const __testing = Object.freeze({
   document.addEventListener(
     "click",
     (event) => {
-      const image = event.target instanceof HTMLImageElement ? event.target : null;
-      if (event.isTrusted && image && findCaptchaImage() === image) {
-        automaticRefreshes = 0;
+      const image = event.target instanceof HTMLImageElement ? event.target : event.target.closest?.("img");
+      if (!image || findCaptchaImage() !== image) {
+        return;
       }
+      automaticRefreshes = 0;
+      lastSolvedToken = "";
+      delete image.dataset.rtaOcrOriginal;
+      clearPreviousAutofill(getCaptchaInput());
+      setStatus("驗證碼已刷新，等待新圖…");
     },
     true,
   );
@@ -1342,6 +1356,11 @@ const __testing = Object.freeze({
     }, 80);
   }
 
+  function imageToken(image) {
+    const src = image.currentSrc || image.src || "";
+    return `${challengeUrl(image)}|${src}|${image.naturalWidth}x${image.naturalHeight}`;
+  }
+
   function scanForCaptcha() {
     const image = findCaptchaImage();
     const input = getCaptchaInput();
@@ -1352,55 +1371,117 @@ const __testing = Object.freeze({
       setStatus("找到驗證碼圖，但還沒找到輸入欄");
       return;
     }
-    const imageUrl = validatedCaptchaUrl(image.currentSrc || image.src);
-    if (!imageUrl) {
+    if (!challengeUrl(image)) {
       setStatus("驗證碼圖片網址無法辨識");
       return;
     }
     if (!image.complete || image.naturalWidth <= 0) {
       return;
     }
-    if (imageUrl === lastRequestedUrl) {
+    const token = imageToken(image);
+    if (token === lastSolvedToken) {
       return;
     }
     if (input.value.trim() !== "" && input.dataset[AUTOFILL_MARKER] !== "true") {
       setStatus("驗證碼欄已有手動輸入，略過");
       return;
     }
-    lastRequestedUrl = imageUrl;
     activeGeneration += 1;
     const generation = activeGeneration;
     clearPreviousAutofill(input);
-    setStatus("正在辨識驗證碼…");
-    void requestSolution(image, imageUrl, generation);
+    setStatus("正在辨識畫面上的驗證碼…");
+    void requestSolution(image, generation);
   }
 
-  async function requestSolution(image, imageUrl, generation) {
-    let reason = "unreadable";
+  async function requestSolution(image, generation) {
     try {
-      const bytes = await loadCaptchaBytes(image, imageUrl);
-      const pixels = await bytesToImageData(bytes);
+      const pixels = await readVisiblePixels(image);
+      if (generation !== activeGeneration) {
+        return;
+      }
       const answer = solver.solve(pixels);
-      if (generation !== activeGeneration || captchaFingerprint(image) !== imageUrl) {
+      if (generation !== activeGeneration) {
         return;
       }
       if (ANSWER_PATTERN.test(answer) && fillCaptchaInput(answer)) {
+        lastSolvedToken = imageToken(image);
         automaticRefreshes = 0;
-        setStatus(`已填入 ${answer}（未送出登入）`, "ok");
+        setStatus(`已填入 ${answer}（對應目前畫面，未送出登入）`, "ok");
       }
       return;
     } catch (error) {
-      reason = error && error.code === "uncertain" ? "uncertain" : "unreadable";
-      if (reason === "uncertain") {
-        setStatus("辨識不確定，正在換圖…");
-      } else {
-        setStatus(`無法辨識：${error && error.message ? error.message : error}`, "error");
+      if (generation !== activeGeneration) {
+        return;
       }
+      if (error && error.code === "uncertain") {
+        lastSolvedToken = imageToken(image);
+        setStatus("辨識不確定，正在換圖…");
+        refreshCaptcha(image);
+        return;
+      }
+      setStatus(`無法辨識：${error && error.message ? error.message : error}`, "error");
+      refreshCaptcha(image);
     }
-    if (generation !== activeGeneration || captchaFingerprint(image) !== imageUrl) {
-      return;
+  }
+
+  async function readVisiblePixels(image) {
+    try {
+      return readCanvasPixels(image);
+    } catch {
+      const url = challengeUrl(image);
+      if (!url || url.startsWith("blob:")) {
+        throw new Error("cannot read captcha pixels");
+      }
+      const bytes = await fetchCaptchaBytes(url);
+      await showFetchedImage(image, url, bytes);
+      return bytesToImageData(bytes);
     }
-    refreshCaptcha(image);
+  }
+
+  function readCanvasPixels(image) {
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (width < 8 || height < 16) {
+      throw new Error("captcha image is too small");
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      throw new Error("canvas 2d context is unavailable");
+    }
+    context.drawImage(image, 0, 0);
+    return context.getImageData(0, 0, width, height);
+  }
+
+  function showFetchedImage(image, originalUrl, bytes) {
+    const blob = new Blob([bytes]);
+    const blobUrl = URL.createObjectURL(blob);
+    return new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("blob image load timed out"));
+      }, 4000);
+      function cleanup() {
+        window.clearTimeout(timeout);
+        image.removeEventListener("load", onLoad);
+        image.removeEventListener("error", onError);
+      }
+      function onLoad() {
+        cleanup();
+        resolve();
+      }
+      function onError() {
+        cleanup();
+        reject(new Error("blob image failed to load"));
+      }
+      image.dataset.rtaOcrOriginal = originalUrl;
+      image.dataset.rtaOcrIgnoreLoad = "1";
+      image.addEventListener("load", onLoad);
+      image.addEventListener("error", onError);
+      image.src = blobUrl;
+    });
   }
 
   function findCaptchaImage() {
@@ -1414,7 +1495,7 @@ const __testing = Object.freeze({
       if (!(image instanceof HTMLImageElement) || !isVisible(image)) {
         continue;
       }
-      const blob = `${image.currentSrc || ""} ${image.src || ""} ${image.id} ${image.className} ${image.alt || ""}`;
+      const blob = `${image.currentSrc || ""} ${image.src || ""} ${image.id} ${image.className} ${image.alt || ""} ${image.dataset.rtaOcrOriginal || ""}`;
       if (/getVerifyCodeImg|verifyCodeFlag|verifyCodeMsg|驗證碼|验证码/i.test(blob)) {
         return image;
       }
@@ -1478,18 +1559,6 @@ const __testing = Object.freeze({
     return null;
   }
 
-  async function loadCaptchaBytes(image, imageUrl) {
-    try {
-      return await fetchCaptchaBytes(imageUrl);
-    } catch (fetchError) {
-      try {
-        return await canvasBytes(image);
-      } catch {
-        throw fetchError;
-      }
-    }
-  }
-
   function fetchCaptchaBytes(url) {
     const request = gmRequest();
     if (!request) {
@@ -1530,32 +1599,6 @@ const __testing = Object.freeze({
         ontimeout: () => reject(new Error("captcha request timed out")),
       });
     });
-  }
-
-  async function canvasBytes(image) {
-    const width = image.naturalWidth || image.width;
-    const height = image.naturalHeight || image.height;
-    if (width < 8 || height < 16) {
-      throw new Error("captcha image is too small");
-    }
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) {
-      throw new Error("canvas 2d context is unavailable");
-    }
-    context.drawImage(image, 0, 0);
-    const blob = await new Promise((resolve, reject) => {
-      canvas.toBlob((value) => {
-        if (value) {
-          resolve(value);
-        } else {
-          reject(new Error("canvas is tainted"));
-        }
-      }, "image/png");
-    });
-    return new Uint8Array(await blob.arrayBuffer());
   }
 
   function hasImageSignature(bytes) {
@@ -1635,15 +1678,23 @@ const __testing = Object.freeze({
       return;
     }
     automaticRefreshes += 1;
-    lastRequestedUrl = "";
+    lastSolvedToken = "";
+    delete image.dataset.rtaOcrOriginal;
     const clickTarget = document.getElementById("verifyCodeMsg") || image;
     if (typeof clickTarget.click === "function") {
       clickTarget.click();
     }
   }
 
-  function captchaFingerprint(image) {
-    return validatedCaptchaUrl(image.currentSrc || image.src);
+  function challengeUrl(image) {
+    if (!image) {
+      return "";
+    }
+    return (
+      validatedCaptchaUrl(image.currentSrc || image.src) ||
+      image.dataset.rtaOcrOriginal ||
+      ""
+    );
   }
 
   function validatedCaptchaUrl(value) {
@@ -1652,6 +1703,9 @@ const __testing = Object.freeze({
     }
     try {
       const url = new URL(value, location.href);
+      if (url.protocol === "blob:") {
+        return "";
+      }
       if (url.protocol !== "https:") {
         return "";
       }
