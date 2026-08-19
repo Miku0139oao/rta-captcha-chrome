@@ -8,7 +8,7 @@
 
 ## 安裝
 
-這不是 Chrome 線上應用程式商店的套件，也**沒有需要編譯的步驟**。倉庫根目錄裡的 `manifest.json` 就是擴充功能；下載後用 Chrome「載入未封裝項目」即可。
+目前**尚未出現在 Chrome 線上應用程式商店**（上架必須用你的 Google 帳號送審，步驟見 [STORE.md](STORE.md)）。沒有需要編譯的步驟。倉庫根目錄裡的 `manifest.json` 就是擴充功能；下載後用 Chrome「載入未封裝項目」即可。
 
 ### 方法一：下載 Release zip（不用 git、不用 Node）
 

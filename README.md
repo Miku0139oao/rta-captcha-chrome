@@ -8,7 +8,7 @@ The extension fills only `input#verifyCode[name="input-verify_code"]`. It does n
 
 ## Install
 
-This is **not** on the Chrome Web Store, and there is **no compile step**. `manifest.json` in the repository root is the extension. Download it and load it unpacked.
+This is **not yet listed** on the Chrome Web Store (publishing has to be submitted from your Google account; see [STORE.md](STORE.md)). There is **no compile step**. `manifest.json` in the repository root is the extension. Download it and load it unpacked.
 
 ### Option 1: Release zip (no git, no Node)
 
