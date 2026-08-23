@@ -1,6 +1,6 @@
 {
   "name": "rta-captcha-chrome",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "private": true,
   "type": "module",
   "description": "Dependency-free Chrome MV3 extension for local RTA captcha OCR",

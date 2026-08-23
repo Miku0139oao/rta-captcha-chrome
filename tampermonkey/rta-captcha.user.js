@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.0.10
+// @version      1.0.11
 // @description  僅在登入頁背景辨識驗證碼；雙擊輸入欄填入。閒置釋放 Worker。不自動登入。
 // @author       Miku0139oao
 // @license      MIT
@@ -619,7 +619,16 @@
   }
 
   async function bytesToImageData(bytes) {
-    const bitmap = await createImageBitmap(new Blob([bytes]));
+    let bitmap;
+    const rawDecodeOptions = {
+      premultiplyAlpha: "none",
+      colorSpaceConversion: "none",
+    };
+    try {
+      bitmap = await createImageBitmap(new Blob([bytes]), rawDecodeOptions);
+    } catch {
+      bitmap = await createImageBitmap(new Blob([bytes]));
+    }
     try {
       const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
       const context = canvas.getContext("2d", { willReadFrequently: true });

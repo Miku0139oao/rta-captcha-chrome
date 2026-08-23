@@ -78,8 +78,16 @@ async function decodeImage(imageBase64) {
   }
 
   let bitmap;
+  const rawDecodeOptions = {
+    premultiplyAlpha: "none",
+    colorSpaceConversion: "none",
+  };
   try {
-    bitmap = await createImageBitmap(new Blob([bytes]));
+    try {
+      bitmap = await createImageBitmap(new Blob([bytes]), rawDecodeOptions);
+    } catch {
+      bitmap = await createImageBitmap(new Blob([bytes]));
+    }
   } catch {
     throw new OCRInputError("Cannot decode captcha image", "decode-failed");
   }

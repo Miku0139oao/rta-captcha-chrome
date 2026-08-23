@@ -593,7 +593,16 @@
   }
 
   async function bytesToImageData(bytes) {
-    const bitmap = await createImageBitmap(new Blob([bytes]));
+    let bitmap;
+    const rawDecodeOptions = {
+      premultiplyAlpha: "none",
+      colorSpaceConversion: "none",
+    };
+    try {
+      bitmap = await createImageBitmap(new Blob([bytes]), rawDecodeOptions);
+    } catch {
+      bitmap = await createImageBitmap(new Blob([bytes]));
+    }
     try {
       const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
       const context = canvas.getContext("2d", { willReadFrequently: true });
