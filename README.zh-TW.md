@@ -2,7 +2,7 @@
 
 [English](README.md) | 繁體中文
 
-這是一個完全離線辨識 RTA SSO 驗證碼的 Chrome Manifest V3 擴充功能。OCR 是 `rta-sales-client-go` `EmbeddedOCRSolver` 的 JavaScript 移植版，固定辨識 5 位十六進位字元，使用內建的 15×21 learned、supplemental 與 fitted 模板。辨識結果不夠確定時不猜答案，而是要求頁面換一張驗證碼；連續自動刷新最多 4 次。
+這是一個完全離線辨識 RTA 登入驗證碼的 Chrome Manifest V3 擴充功能。OCR 是 `rta-sales-client-go` `EmbeddedOCRSolver` 的 JavaScript 移植版，固定辨識 5 位十六進位字元。辨識結果不夠確定時不猜答案；不會自動換圖，也不會送出表單。
 
 驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄**（或點工具列圖示）才填入。它不會讀取帳號或密碼欄位、不會提交登入表單，也不會儲存登入資料。
 
@@ -14,21 +14,21 @@
 2. 打開這支腳本的 Raw 頁，Tampermonkey 會跳出安裝：  
    https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
 3. 按「安裝」。
-4. 從 `https://partner.rta-os.com/` 進入登入。驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄**才填入。頁面上沒有浮層。登入仍由你送出。
+4. 開啟 RTA 登入頁。驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄**才填入。頁面上沒有浮層。登入仍由你送出。
 5. 若已安裝舊版，到 Tampermonkey 儀表板刪除後重裝（版本需為 **1.0.9**）。
 
-Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次向 `mansso.rta-os.com` 取圖時，Tampermonkey 可能問你是否允許網域，選允許。
+Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次取圖時腳本管理器可能詢問是否允許 RTA 網域，選允許。
 
-目前**尚未出現在 Chrome 線上應用程式商店**（上架必須用你的 Google 帳號送審，步驟見 [STORE.md](STORE.md)）。若要改裝成擴充功能：沒有需要編譯的步驟。倉庫根目錄裡的 `manifest.json` 就是擴充功能；下載後用 Chrome「載入未封裝項目」即可。
+目前**尚未上架** Chrome 線上應用程式商店。若要改裝成擴充功能：沒有需要編譯的步驟。倉庫根目錄裡的 `manifest.json` 就是擴充功能；下載後用 Chrome「載入未封裝項目」即可。
 
 ### 方法一：下載 Release zip（不用 git、不用 Node）
 
-1. 打開 [Releases](https://github.com/Miku0139oao/rta-captcha-chrome/releases) ，下載最新的 `rta-captcha-chrome-*.zip`。
+1. 打開 [Releases](https://github.com/Miku0139oao/rta-captcha-chrome/releases)，下載最新的 `rta-captcha-chrome-*.zip`。
 2. 解壓縮到任意資料夾。解出來的目錄裡必須看得到 `manifest.json`。
 3. Chrome 網址列輸入 `chrome://extensions/` 後 Enter。
 4. 右上角打開「開發人員模式」。
 5. 按「載入未封裝項目」，選**解壓縮後的那個資料夾**（不要選 zip 檔本身）。
-6. 開啟 RTA 登入頁（`partner.rta-os.com` 或 `sso.rta-os.com`）。圖出來後**雙擊驗證碼輸入欄**（或點工具列圖示）填入；登入仍由你自己確認後送出。
+6. 開啟 RTA 登入頁。圖出來後**雙擊驗證碼輸入欄**（或點工具列圖示）填入；登入仍由你自己確認後送出。
 
 Microsoft Edge 按鈕名稱不同，流程一樣：
 
@@ -49,24 +49,24 @@ git clone https://github.com/Miku0139oao/rta-captcha-chrome.git
 
 ## MV3 架構
 
-資料流刻意分成四個隔離層：
+資料流分成四個隔離層：
 
-1. `content.js` 在 `sso` / `mansso` / `partner`（含 SSO iframe）執行。登入頁才監看；優先擷取畫面上的像素，雙擊才填入。
-2. `background.js` 驗證訊息來源與 captcha URL。能讀到畫面像素就不重抓圖；否則才向 `mansso.rta-os.com/getVerifyCodeImg` 取圖並回傳給頁面換上新圖。閒置 20 秒關閉 OCR 文件。
-3. `offscreen.html` / `offscreen.js` 透過經過來源驗證的私有 port 接收工作，有需要才建立 Worker。
-4. `ocr/worker.js` 在 dedicated Web Worker 內解碼圖片，`ocr/solver.js` 執行 OCR。OCR 不占用 RTA 頁面的主執行緒。
+1. Content script 只在 RTA 官方登入頁執行；優先讀取畫面上已顯示的驗證碼像素，雙擊才填入。
+2. `background.js` 驗證訊息來源後執行本機 OCR；必要時才向 RTA 官方驗證碼端點取得圖片。
+3. `offscreen.html` / `offscreen.js` 透過經過來源驗證的私有 port 承載 OCR Worker，頁面內容無法直接取得此 port。
+4. `ocr/worker.js` 在 dedicated Web Worker 內解碼與辨識，不占用登入頁面的主執行緒。
 
-Worker 只回傳符合 `^[0-9a-f]{5}$` 的答案。兩種正規化模型不一致、距離大於 `0.20`，或最佳與次佳的 margin 小於 `0.02` 時會 fail closed。無法辨識時不自動換圖、不送出表單；請自行點驗證碼圖換一張後再雙擊。
+Worker 只回傳符合固定格式的答案。兩種正規化模型不一致、距離過大或最佳與次佳差距不足時會 fail closed。無法辨識時不會自動換圖、不會碰觸其他按鈕或送出表單；請自行點驗證碼圖換一張後再雙擊。
 
 ## 權限理由
 
-`manifest.json` 的權限刻意維持最小範圍：
+權限刻意維持最小範圍：
 
 | 權限 | 用途 |
 | --- | --- |
 | `offscreen` | 建立不顯示 UI 的 extension document，以承載本機 OCR Worker。 |
-| `https://sso.rta-os.com/*` | 在正式 RTA SSO 頁面載入 content script，並驗證訊息來源。partner / mansso 也會注入腳本，但沒有額外 host permission。 |
-| `https://mansso.rta-os.com/*` | 只取得實際的 RTA 驗證碼圖片；程式另行把 path 鎖定為 `/getVerifyCodeImg`，並嚴格驗證唯一的 `verifyCodeFlag` query。Chrome match pattern 無法把 host permission 限制到單一路徑，因此再由程式執行 path allowlist。 |
+| RTA 登入頁 host | 只在官方登入頁載入 content script，並驗證訊息來源。 |
+| RTA 驗證碼圖片 host | 只取得該頁實際顯示的驗證碼圖片。 |
 
 沒有要求 `activeTab`、`cookies`、`history`、`scripting`、`storage`、`tabs`、`webRequest` 或 `<all_urls>`，也沒有 `web_accessible_resources`。
 
@@ -74,15 +74,13 @@ Worker 只回傳符合 `^[0-9a-f]{5}$` 的答案。兩種正規化模型不一�
 
 - 無遠端程式碼：所有 JavaScript、OCR 邏輯與模板都包在擴充功能中，CSP 僅允許 `'self'`，禁止 object、inline script 與 eval。
 - 無外部 OCR：圖片不會傳給第三方 OCR、分析、遙測或記錄服務；程式沒有第三方網路端點。
-- Cookie 不外洩：驗證碼請求使用瀏覽器原生 `credentials: "include"`，Cookie 最多只會由瀏覽器直接送往 allowlist 中的 `mansso.rta-os.com`。程式沒有 `cookies` 權限，不讀取 `document.cookie`，也看不到或記錄 Cookie 值。
-- 不存憑證：程式沒有 storage 權限，不查詢 `#account` 或 `#password`，不讀取、雜湊、記錄或傳送任何憑證。
-- 僅填驗證碼：目標必須同時是 `input#verifyCode`、name 為 `input-verify_code`、type 為 `text`，且不得具有 password autocomplete 語意。DOM 契約不符時直接停止。
-- 不覆蓋手動輸入：驗證碼欄位已有使用者輸入時不啟動新工作；使用者在辨識期間自行輸入時也不覆蓋其內容。
-- 不自動登入：沒有點擊 `#login` 或呼叫 form submission。使用者仍需自行檢查並送出。
-- 不記錄敏感內容：production code 不輸出圖片、答案、flag、URL、表單內容或錯誤細節到 console。
-- 有界資源：圖片上限 4 MiB、解碼像素上限 2,000,000、網路與 OCR 都有 timeout，自動刷新也有上限。
-
-RTA 的驗證碼 endpoint 對相同 flag 再請求時會產生新的圖片，因此 background 會在頁面圖片完成載入後才取得最新 challenge。若取得圖片後的本機解碼或 OCR 失敗，頁面必須刷新，避免畫面仍顯示已失效的舊圖。
+- Cookie 不外洩：驗證碼請求使用瀏覽器原生 `credentials: "include"`，Cookie 只會由瀏覽器直接送往 RTA 官方主機。程式沒有 `cookies` 權限，不讀取 `document.cookie`，也看不到或記錄 Cookie 值。
+- 不存憑證：程式沒有 storage 權限，不讀取、雜湊、記錄或傳送任何憑證。
+- 僅填驗證碼：只針對登入頁的驗證碼輸入欄位；DOM 契約不符時直接停止。
+- 不覆蓋手動輸入：驗證碼欄位已有使用者輸入時不覆蓋其內容。
+- 不自動登入：不點擊登入按鈕、不送出表單。使用者仍需自行檢查並送出。
+- 不記錄敏感內容：production code 不輸出圖片、答案、URL 或表單內容到 console。
+- 有界資源：圖片大小與像素數有上限、網路與 OCR 都有 timeout；離開登入頁或閒置時釋放 OCR 資源。
 
 ## 測試與驗證
 
@@ -94,13 +92,7 @@ npm run check:syntax
 npm run verify
 ```
 
-測試涵蓋：
-
-- 與 Go 測試相同的 `0be7f` 合成驗證碼辨識。
-- 上游 `e2c63` 彩色雜訊 regression fixture，驗證 topology review 不會把被雜訊封口的 `c` 猜成閉環字元。
-- uncertainty fail-closed、輸入尺寸、glyph topology、雙 extraction margin 與 packed overlap 距離。
-- Manifest V3、精確 host allowlist、權限最小化、嚴格 CSP、無遠端程式碼、無 eval。
-- content/service-worker/offscreen/dedicated-worker 分層，以及 content script 不含帳號或密碼 selector。
+測試涵蓋合成驗證碼辨識、彩色雜訊 regression fixture、uncertainty fail-closed、輸入尺寸、glyph topology、雙 extraction margin 與 packed overlap 距離，以及 Manifest V3 權限最小化、嚴格 CSP、無遠端程式碼、無 eval、content/service-worker/offscreen/dedicated-worker 分層。
 
 ## 更新內建模板
 
@@ -111,12 +103,7 @@ node scripts/generate-template-data.mjs path\to\rta-sales-client-go
 npm run verify
 ```
 
-產生器只讀取：
-
-- `rtasales/embedded_ocr_learned.go`
-- `rtasales/embedded_ocr_consensus_learned.go`
-
-產生檔頭會記錄兩個來源檔的 SHA-256，方便稽核。這次移植的來源 revision 是 `3a21e0ab9bb91d2ad033d226db6a372074f58e0e`。
+產生檔頭會記錄來源檔的 SHA-256，方便稽核。
 
 ## 授權
 
