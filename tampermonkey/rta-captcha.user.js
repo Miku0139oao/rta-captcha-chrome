@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.0.15
+// @version      1.0.16
 // @description  僅在登入頁背景辨識驗證碼；雙擊輸入欄填入。不攔截點驗證碼換圖。
 // @author       Miku0139oao
 // @license      MIT
@@ -51,7 +51,6 @@
   let prefetchTimer = 0;
   let idleTimer = 0;
   const IDLE_RELEASE_MS = 20000;
-  let preview = { node: null, blobUrl: "", image: null };
 
   document.addEventListener("dblclick", onDoubleClick, true);
   document.addEventListener(
@@ -116,7 +115,6 @@
 
   function onNavigation() {
     cache = { token: "", answer: "", error: null, job: null };
-    hidePreview();
     if (onLoginSurface()) {
       ensureObserver();
       schedulePrefetch();
@@ -256,7 +254,6 @@
     let pixels;
     try {
       pixels = readCanvasPixels(image);
-      hidePreview();
     } catch (error) {
       if (!allowNetwork) {
         throw error;
@@ -265,61 +262,12 @@
       if (!url) {
         throw new Error("cannot read captcha pixels");
       }
-      const bytes = await fetchCaptchaBytes(url);
-      showPreview(image, bytes);
-      pixels = await bytesToImageData(bytes);
+      pixels = await bytesToImageData(await fetchCaptchaBytes(url));
     }
     if (imageToken(image) !== token) {
       throw new Error("captcha changed");
     }
     return ocrPixels(pixels);
-  }
-
-  function hidePreview() {
-    window.removeEventListener("scroll", syncPreview, true);
-    window.removeEventListener("resize", syncPreview);
-    if (preview.blobUrl) {
-      URL.revokeObjectURL(preview.blobUrl);
-    }
-    if (preview.node) {
-      preview.node.remove();
-    }
-    preview = { node: null, blobUrl: "", image: null };
-  }
-
-  function syncPreview() {
-    if (!preview.node || !preview.image || !preview.image.isConnected) {
-      hidePreview();
-      return;
-    }
-    const rect = preview.image.getBoundingClientRect();
-    preview.node.style.left = `${Math.round(rect.left)}px`;
-    preview.node.style.top = `${Math.round(rect.top)}px`;
-    preview.node.style.width = `${Math.round(rect.width)}px`;
-    preview.node.style.height = `${Math.round(rect.height)}px`;
-  }
-
-  function showPreview(image, bytes) {
-    hidePreview();
-    const blobUrl = URL.createObjectURL(new Blob([bytes]));
-    const node = document.createElement("img");
-    node.alt = "";
-    node.src = blobUrl;
-    node.style.cssText = [
-      "position:fixed",
-      "pointer-events:none",
-      "z-index:2147483645",
-      "object-fit:fill",
-      "margin:0",
-      "padding:0",
-      "border:0",
-      "box-sizing:border-box",
-    ].join(";");
-    document.documentElement.appendChild(node);
-    preview = { node, blobUrl, image };
-    syncPreview();
-    window.addEventListener("scroll", syncPreview, true);
-    window.addEventListener("resize", syncPreview);
   }
 
   function ocrPixels(pixels) {
@@ -367,19 +315,6 @@
     }
     return localSolver;
   }
-
-  document.addEventListener(
-    "click",
-    (event) => {
-      const image = event.target instanceof Element ? event.target.closest("img") : null;
-      if (!image || findCaptchaImage() !== image) {
-        return;
-      }
-      cache = { token: "", answer: "", error: null, job: null };
-      hidePreview();
-    },
-    true,
-  );
 
   function onDoubleClick(event) {
     const target = event.target;
