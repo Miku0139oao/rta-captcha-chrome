@@ -1,13 +1,17 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.0.12
+// @version      1.0.13
 // @description  僅在登入頁背景辨識驗證碼；雙擊輸入欄填入。不攔截點驗證碼換圖。
 // @author       Miku0139oao
 // @license      MIT
 // @match        https://*.rta-os.com/*
 // @match        https://rta-os.com/*
-// @grant        none
+// @connect      sso.rta-os.com
+// @connect      mansso.rta-os.com
+// @connect      partner.rta-os.com
+// @grant        GM_xmlhttpRequest
+// @grant        GM.xmlHttpRequest
 // @run-at       document-idle
 // @homepageURL  https://github.com/Miku0139oao/rta-captcha-chrome
 // @supportURL   https://github.com/Miku0139oao/rta-captcha-chrome/issues
@@ -79,26 +83,24 @@
   );
   window.addEventListener("hashchange", onNavigation);
   window.addEventListener("popstate", onNavigation);
-  patchHistoryApi();
+  try {
+    patchHistoryApi();
+  } catch {
+    // Some Tampermonkey sandboxes forbid rewriting history.
+  }
   onNavigation();
 
   function patchHistoryApi() {
     for (const method of ["pushState", "replaceState"]) {
       const original = history[method];
-      if (typeof original !== "function" || original.rtaPatched === true) {
+      if (typeof original !== "function") {
         continue;
       }
-      const patched = function (...args) {
+      history[method] = function (...args) {
         const result = original.apply(this, args);
         onNavigation();
         return result;
       };
-      try {
-        patched.rtaPatched = true;
-      } catch {
-        // Non-extensible function; still safe to assign.
-      }
-      history[method] = patched;
     }
   }
 
@@ -367,7 +369,15 @@
   }
 
   async function readVisiblePixels(image) {
-    return readCanvasPixels(image);
+    try {
+      return readCanvasPixels(image);
+    } catch {
+      const url = challengeUrl(image);
+      if (!url) {
+        throw new Error("cannot read captcha pixels");
+      }
+      return bytesToImageData(await fetchCaptchaBytes(url));
+    }
   }
 
   function readCanvasPixels(image) {
@@ -450,6 +460,65 @@
     }
     const rect = element.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
+  }
+
+  function gmRequest() {
+    if (typeof GM_xmlhttpRequest === "function") {
+      return GM_xmlhttpRequest;
+    }
+    if (typeof GM !== "undefined" && typeof GM.xmlHttpRequest === "function") {
+      return GM.xmlHttpRequest;
+    }
+    return null;
+  }
+
+  function fetchCaptchaBytes(url) {
+    const request = gmRequest();
+    if (!request) {
+      return Promise.reject(new Error("GM_xmlhttpRequest is unavailable"));
+    }
+    return new Promise((resolve, reject) => {
+      request({
+        method: "GET",
+        url,
+        responseType: "arraybuffer",
+        anonymous: false,
+        timeout: 12000,
+        headers: {
+          Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        },
+        onload(response) {
+          if (response.status < 200 || response.status >= 300) {
+            reject(new Error(`captcha HTTP ${response.status}`));
+            return;
+          }
+          const buffer = response.response;
+          if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0) {
+            reject(new Error("empty captcha image"));
+            return;
+          }
+          const bytes = new Uint8Array(buffer);
+          resolve(bytes);
+        },
+        onerror: () => reject(new Error("captcha request failed")),
+        ontimeout: () => reject(new Error("captcha request timed out")),
+      });
+    });
+  }
+
+  async function bytesToImageData(bytes) {
+    const bitmap = await createImageBitmap(new Blob([bytes]));
+    try {
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) {
+        throw new Error("canvas 2d context is unavailable");
+      }
+      context.drawImage(bitmap, 0, 0);
+      return context.getImageData(0, 0, bitmap.width, bitmap.height);
+    } finally {
+      bitmap.close();
+    }
   }
 
   function hint(input, text) {
