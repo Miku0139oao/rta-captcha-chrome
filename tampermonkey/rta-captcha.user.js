@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.0.9
+// @version      1.0.10
 // @description  僅在登入頁背景辨識驗證碼；雙擊輸入欄填入。閒置釋放 Worker。不自動登入。
 // @author       Miku0139oao
 // @license      MIT
@@ -337,23 +337,86 @@
     if (!(image instanceof HTMLImageElement) || !input) {
       return;
     }
-    const token = imageToken(image);
+    hint(input, "正在辨識驗證碼…");
+    const tokenBefore = imageToken(image);
     prefetchCurrentCaptcha();
     try {
-      let answer = cache.token === token ? cache.answer : "";
-      if (!answer && cache.token === token && cache.job) {
-        answer = await cache.job;
+      let result = null;
+      if (cache.token === tokenBefore && cache.answer) {
+        result = { answer: cache.answer, token: cache.token };
+      } else {
+        result = await solveWithRetries(3, input);
       }
-      if (!answer) {
-        answer = await recognize(image, token);
-        cache = { token, answer, error: null, job: null };
+      if (result.token === cache.token && !cache.answer) {
+        cache = { ...cache, answer: result.answer, error: null, job: null };
       }
-      if (ANSWER_PATTERN.test(answer) && imageToken(findCaptchaImage() || image) === token) {
-        fillCaptchaInput(answer);
+      const latest = findCaptchaImage();
+      if (
+        ANSWER_PATTERN.test(result.answer) &&
+        latest instanceof HTMLImageElement &&
+        imageToken(latest) === result.token
+      ) {
+        fillCaptchaInput(result.answer);
+      } else {
+        hint(input, "辨識失敗。點驗證碼換圖後再雙擊");
       }
     } catch {
       hint(input, "辨識失敗。點驗證碼換圖後再雙擊");
     }
+  }
+
+  async function solveWithRetries(maxAttempts, input) {
+    let lastError = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const image = findCaptchaImage();
+      if (!(image instanceof HTMLImageElement)) {
+        throw lastError || new Error("captcha not found");
+      }
+      const token = imageToken(image);
+      try {
+        const answer = await recognize(image, token);
+        return { answer, token };
+      } catch (error) {
+        lastError = error;
+        if (attempt + 1 >= maxAttempts) {
+          break;
+        }
+        hint(input, "選沒把握，自動換一張再試…");
+        const refreshed = await refreshCaptchaImage(image);
+        if (!refreshed) {
+          break;
+        }
+      }
+    }
+    throw lastError || new Error("ocr failed");
+  }
+
+  function refreshCaptchaImage(image) {
+    return new Promise((resolve) => {
+      if (!image.isConnected) {
+        resolve(false);
+        return;
+      }
+      const before = imageToken(image);
+      let settled = false;
+      const timeout = window.setTimeout(() => done(false), 6000);
+      function done(ok) {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        window.clearTimeout(timeout);
+        image.removeEventListener("load", onLoad);
+        resolve(ok);
+      }
+      function onLoad() {
+        window.setTimeout(() => done(imageToken(image) !== before), 50);
+      }
+      image.addEventListener("load", onLoad);
+      // Same as a user click: the page itself fetches a fresh challenge,
+      // so the on-screen pixels and the server-side answer stay in sync.
+      image.click();
+    });
   }
 
   async function readVisiblePixels(image) {
