@@ -2,148 +2,440 @@
   "use strict";
 
   const MESSAGE_TYPE = "RTA_CAPTCHA_SOLVE";
-  const CAPTCHA_IMAGE_SELECTOR = "img#verifyCodeMsg";
-  const CAPTCHA_INPUT_SELECTOR = 'input#verifyCode[name="input-verify_code"]';
+  const WARMUP_MESSAGE_TYPE = "RTA_CAPTCHA_WARMUP";
+  const RELEASE_MESSAGE_TYPE = "RTA_CAPTCHA_RELEASE";
+  const FILL_MESSAGE_TYPE = "RTA_CAPTCHA_FILL";
+  const IMAGE_SELECTORS = [
+    "img#verifyCodeMsg",
+    'img[src*="getVerifyCodeImg"]',
+    'img[src*="verifyCodeFlag"]',
+  ];
+  const INPUT_SELECTORS = [
+    'input#verifyCode[name="input-verify_code"]',
+    "input#verifyCode",
+    'input[name="input-verify_code"]',
+  ];
   const CAPTCHA_ORIGIN = "https://mansso.rta-os.com";
   const CAPTCHA_PATH = "/getVerifyCodeImg";
   const CAPTCHA_FLAG_PATTERN = /^[0-9a-f]{32}$/i;
   const ANSWER_PATTERN = /^[0-9a-f]{5}$/;
-  const MAX_AUTOMATIC_REFRESHES = 4;
+  const HINT_READY = "雙擊此欄或點工具列圖示即可填入驗證碼";
+  const HINT_BUSY = "正在辨識驗證碼…";
+  const HINT_DONE = "已填入。可再雙擊重填，或點驗證碼換圖";
+  const HINT_FAIL = "辨識失敗。點驗證碼換圖後再雙擊";
   const AUTOFILL_MARKER = "rtaCaptchaOcrAutofilled";
 
-  let lastRequestedUrl = "";
-  let activeGeneration = 0;
-  let automaticRefreshes = 0;
-  let scanQueued = false;
+  let cache = emptyCache();
+  let warmed = false;
+  let presenceObserver = null;
+  let imageObserver = null;
+  let boundImage = null;
+  let prefetchTimer = 0;
+  let idleCallbackId = 0;
 
-  const observer = new MutationObserver(queueScan);
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["src"],
-    childList: true,
-    subtree: true,
+  document.addEventListener("dblclick", onDoubleClick, true);
+  document.addEventListener("load", onImageLoad, true);
+  document.addEventListener("input", onManualInput, true);
+  window.addEventListener("hashchange", onNavigation);
+  window.addEventListener("popstate", onNavigation);
+  window.addEventListener("pagehide", releaseIfLeftLogin);
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== FILL_MESSAGE_TYPE) {
+      return false;
+    }
+    void fillCachedAnswer().then(() => sendResponse({ ok: true }));
+    return true;
   });
+  onNavigation();
 
-  document.addEventListener(
-    "load",
-    (event) => {
-      if (event.target instanceof HTMLImageElement && event.target.matches(CAPTCHA_IMAGE_SELECTOR)) {
-        queueScan();
-      }
-    },
-    true,
-  );
+  function emptyCache() {
+    return { token: "", answer: "", error: null, job: null };
+  }
 
-  document.addEventListener(
-    "click",
-    (event) => {
-      if (
-        event.isTrusted &&
-        event.target instanceof HTMLImageElement &&
-        event.target.matches(CAPTCHA_IMAGE_SELECTOR)
-      ) {
-        automaticRefreshes = 0;
-      }
-    },
-    true,
-  );
+  function onLoginSurface() {
+    const host = location.hostname.toLowerCase();
+    if (host === "sso.rta-os.com" || host === "mansso.rta-os.com") {
+      return true;
+    }
+    const route = `${location.pathname}${location.search}${location.hash}`;
+    if (host === "partner.rta-os.com" && /login|sso|auth/i.test(route)) {
+      return true;
+    }
+    return Boolean(document.querySelector(IMAGE_SELECTORS.join(",")));
+  }
 
-  document.addEventListener(
-    "input",
-    (event) => {
-      if (
-        event.isTrusted &&
-        event.target instanceof HTMLInputElement &&
-        event.target.matches(CAPTCHA_INPUT_SELECTOR)
-      ) {
-        delete event.target.dataset[AUTOFILL_MARKER];
-      }
-    },
-    true,
-  );
-
-  queueScan();
-
-  function queueScan() {
-    if (scanQueued) {
+  function onNavigation() {
+    cache = emptyCache();
+    if (onLoginSurface()) {
+      ensurePresenceObserver();
+      attachIfPresent();
+      schedulePrefetch();
+      void warmup();
       return;
     }
-    scanQueued = true;
-    queueMicrotask(() => {
-      scanQueued = false;
-      scanForCaptcha();
+    teardownWatchers();
+    releaseIfLeftLogin();
+  }
+
+  function releaseIfLeftLogin() {
+    if (onLoginSurface()) {
+      return;
+    }
+    teardownWatchers();
+    chrome.runtime.sendMessage({ type: RELEASE_MESSAGE_TYPE }).catch(() => undefined);
+  }
+
+  function ensurePresenceObserver() {
+    if (presenceObserver || !document.documentElement) {
+      return;
+    }
+    presenceObserver = new MutationObserver(() => {
+      attachIfPresent();
+    });
+    presenceObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
     });
   }
 
-  function scanForCaptcha() {
-    const image = document.querySelector(CAPTCHA_IMAGE_SELECTOR);
+  function attachIfPresent() {
+    const image = findCaptchaImage();
     const input = getCaptchaInput();
     if (!(image instanceof HTMLImageElement) || !input) {
+      if (boundImage && !boundImage.isConnected) {
+        detachImage();
+        ensurePresenceObserver();
+      }
       return;
     }
-
-    const imageUrl = validatedCaptchaUrl(image.currentSrc || image.src);
-    if (!imageUrl || !image.complete || image.naturalWidth <= 0) {
+    markCaptchaInput(input);
+    if (boundImage === image) {
       return;
     }
-    if (imageUrl === lastRequestedUrl) {
-      return;
+    detachImage();
+    boundImage = image;
+    imageObserver = new MutationObserver(schedulePrefetch);
+    imageObserver.observe(image, { attributes: true, attributeFilter: ["src"] });
+    if (presenceObserver) {
+      presenceObserver.disconnect();
+      presenceObserver = null;
     }
-    if (
-      input.value.trim() !== "" &&
-      input.dataset[AUTOFILL_MARKER] !== "true"
-    ) {
-      return;
-    }
-
-    lastRequestedUrl = imageUrl;
-    activeGeneration += 1;
-    const generation = activeGeneration;
-    clearPreviousAutofill(input);
-    void requestSolution(image, imageUrl, generation);
+    schedulePrefetch();
   }
 
-  async function requestSolution(image, imageUrl, generation) {
-    let response;
+  function detachImage() {
+    imageObserver?.disconnect();
+    imageObserver = null;
+    boundImage = null;
+  }
+
+  function teardownWatchers() {
+    window.clearTimeout(prefetchTimer);
+    cancelIdleWork();
+    presenceObserver?.disconnect();
+    presenceObserver = null;
+    detachImage();
+  }
+
+  function cancelIdleWork() {
+    if (!idleCallbackId) {
+      return;
+    }
+    if (typeof cancelIdleCallback === "function") {
+      cancelIdleCallback(idleCallbackId);
+    }
+    idleCallbackId = 0;
+  }
+
+  function onImageLoad(event) {
+    if (!(event.target instanceof HTMLImageElement)) {
+      return;
+    }
+    if (event.target.dataset.rtaOcrIgnoreLoad === "1") {
+      delete event.target.dataset.rtaOcrIgnoreLoad;
+      return;
+    }
+    if (!onLoginSurface()) {
+      return;
+    }
+    attachIfPresent();
+    schedulePrefetch();
+  }
+
+  function onManualInput(event) {
+    if (
+      event.isTrusted &&
+      event.target instanceof HTMLInputElement &&
+      event.target === getCaptchaInput()
+    ) {
+      delete event.target.dataset[AUTOFILL_MARKER];
+    }
+  }
+
+  function onDoubleClick(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    const captchaInput = getCaptchaInput();
+    const captchaImage = findCaptchaImage();
+    const hitInput =
+      captchaInput &&
+      (target === captchaInput || captchaInput.contains(target));
+    const hitImage = captchaImage && target.closest("img") === captchaImage;
+    if (!hitInput && !hitImage) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void fillCachedAnswer();
+  }
+
+  function schedulePrefetch() {
+    if (!onLoginSurface()) {
+      return;
+    }
+    window.clearTimeout(prefetchTimer);
+    cancelIdleWork();
+    prefetchTimer = window.setTimeout(() => {
+      const run = () => {
+        idleCallbackId = 0;
+        void prefetchCurrentCaptcha();
+      };
+      if (typeof requestIdleCallback === "function") {
+        idleCallbackId = requestIdleCallback(run, { timeout: 400 });
+      } else {
+        run();
+      }
+    }, 120);
+  }
+
+  async function warmup() {
+    if (warmed) {
+      return;
+    }
+    warmed = true;
     try {
-      response = await chrome.runtime.sendMessage({
+      await chrome.runtime.sendMessage({ type: WARMUP_MESSAGE_TYPE });
+    } catch {
+      warmed = false;
+    }
+  }
+
+  function imageToken(image) {
+    const src =
+      image.dataset.rtaOcrOriginal || image.currentSrc || image.src || "";
+    return `${src}|${image.naturalWidth}x${image.naturalHeight}`;
+  }
+
+  function prefetchCurrentCaptcha() {
+    const image = findCaptchaImage();
+    if (!(image instanceof HTMLImageElement) || !image.complete || image.naturalWidth <= 0) {
+      return;
+    }
+    const token = imageToken(image);
+    if (cache.token === token && (cache.answer || cache.job || cache.error)) {
+      return;
+    }
+    const job = recognize(image, token);
+    cache = { token, answer: "", error: null, job };
+    void job.then(
+      (answer) => {
+        if (cache.token === token) {
+          cache = { token: imageToken(image), answer, error: null, job: null };
+          hint(getCaptchaInput(), HINT_READY);
+        }
+      },
+      (error) => {
+        if (cache.token === token) {
+          cache = { token: imageToken(image), answer: "", error, job: null };
+        }
+      },
+    );
+  }
+
+  async function recognize(image, token) {
+    try {
+      const pixels = readCanvasPixels(image);
+      if (imageToken(image) !== token) {
+        throw new Error("captcha changed");
+      }
+      const response = await chrome.runtime.sendMessage({
+        type: MESSAGE_TYPE,
+        requestId: crypto.randomUUID(),
+        width: pixels.width,
+        height: pixels.height,
+        buffer: pixels.data.buffer,
+      });
+      return readAnswer(response);
+    } catch {
+      const imageUrl = challengeUrl(image);
+      if (!imageUrl) {
+        throw new Error("cannot read captcha");
+      }
+      const response = await chrome.runtime.sendMessage({
         type: MESSAGE_TYPE,
         requestId: crypto.randomUUID(),
         imageUrl,
       });
-    } catch {
-      return;
-    }
-
-    if (
-      generation !== activeGeneration ||
-      validatedCaptchaUrl(image.currentSrc || image.src) !== imageUrl
-    ) {
-      return;
-    }
-    if (response?.ok === true && ANSWER_PATTERN.test(String(response.answer ?? ""))) {
-      if (fillCaptchaInput(response.answer)) {
-        automaticRefreshes = 0;
+      if (typeof response?.imageBase64 === "string" && response.imageBase64) {
+        await showFetchedImage(image, imageUrl, response.imageBase64);
       }
-      return;
-    }
-    if (response?.reason === "uncertain" || response?.reason === "unreadable") {
-      refreshCaptcha(image);
+      return readAnswer(response);
     }
   }
 
-  function getCaptchaInput() {
-    const input = document.querySelector(CAPTCHA_INPUT_SELECTOR);
-    if (
-      !(input instanceof HTMLInputElement) ||
-      input.id !== "verifyCode" ||
-      input.name !== "input-verify_code" ||
-      input.type.toLowerCase() !== "text" ||
-      ["current-password", "new-password"].includes(input.autocomplete.toLowerCase())
-    ) {
-      return null;
+  function readAnswer(response) {
+    if (response?.ok === true && ANSWER_PATTERN.test(String(response.answer ?? ""))) {
+      return response.answer;
     }
-    return input;
+    const error = new Error(response?.reason || "ocr failed");
+    error.reason = response?.reason;
+    throw error;
+  }
+
+  async function fillCachedAnswer() {
+    const image = findCaptchaImage();
+    const input = getCaptchaInput();
+    if (!(image instanceof HTMLImageElement) || !input) {
+      return;
+    }
+    markCaptchaInput(input);
+    hint(input, HINT_BUSY);
+    const token = imageToken(image);
+    prefetchCurrentCaptcha();
+    try {
+      let answer = cache.token === token ? cache.answer : "";
+      if (!answer && cache.token === token && cache.job) {
+        answer = await cache.job;
+      }
+      if (!answer) {
+        answer = await recognize(image, token);
+        cache = { token: imageToken(image), answer, error: null, job: null };
+      }
+      if (ANSWER_PATTERN.test(answer)) {
+        fillCaptchaInput(answer);
+        hint(input, HINT_DONE);
+      }
+    } catch {
+      hint(input, HINT_FAIL);
+    }
+  }
+
+  function readCanvasPixels(image) {
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (width < 8 || height < 16) {
+      throw new Error("captcha image is too small");
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      throw new Error("canvas 2d context is unavailable");
+    }
+    context.drawImage(image, 0, 0);
+    return context.getImageData(0, 0, width, height);
+  }
+
+  function showFetchedImage(image, originalUrl, imageBase64) {
+    const bytes = base64ToBytes(imageBase64);
+    const blobUrl = URL.createObjectURL(new Blob([bytes]));
+    return new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("blob image load timed out"));
+      }, 4000);
+      function cleanup() {
+        window.clearTimeout(timeout);
+        image.removeEventListener("load", onLoad);
+        image.removeEventListener("error", onError);
+      }
+      function onLoad() {
+        cleanup();
+        resolve();
+      }
+      function onError() {
+        cleanup();
+        reject(new Error("blob image failed to load"));
+      }
+      image.dataset.rtaOcrOriginal = originalUrl;
+      image.dataset.rtaOcrIgnoreLoad = "1";
+      image.addEventListener("load", onLoad);
+      image.addEventListener("error", onError);
+      image.src = blobUrl;
+    });
+  }
+
+  function base64ToBytes(imageBase64) {
+    const binary = atob(imageBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+
+  function findCaptchaImage() {
+    for (const selector of IMAGE_SELECTORS) {
+      const image = document.querySelector(selector);
+      if (image instanceof HTMLImageElement && isVisible(image)) {
+        return image;
+      }
+    }
+    return null;
+  }
+
+  function getCaptchaInput() {
+    for (const selector of INPUT_SELECTORS) {
+      const input = document.querySelector(selector);
+      if (isUsableCaptchaInput(input)) {
+        return input;
+      }
+    }
+    return null;
+  }
+
+  function isUsableCaptchaInput(input) {
+    if (!(input instanceof HTMLInputElement) || !isVisible(input) || input.disabled) {
+      return false;
+    }
+    const type = (input.type || "text").toLowerCase();
+    if (type === "password" || type === "hidden" || type === "email" || type === "submit") {
+      return false;
+    }
+    const auto = (input.autocomplete || "").toLowerCase();
+    if (auto === "current-password" || auto === "new-password") {
+      return false;
+    }
+    return true;
+  }
+
+  function isVisible(element) {
+    if (!element || !element.isConnected) {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function markCaptchaInput(input) {
+    if (input.dataset.rtaOcrHint === "1") {
+      return;
+    }
+    input.dataset.rtaOcrHint = "1";
+    hint(input, HINT_READY);
+  }
+
+  function hint(input, text) {
+    if (input) {
+      input.title = text;
+    }
   }
 
   function fillCaptchaInput(answer) {
@@ -151,25 +443,13 @@
     if (!input || !ANSWER_PATTERN.test(answer)) {
       return false;
     }
-    const wasAutofilled = input.dataset[AUTOFILL_MARKER] === "true";
-    if (input.value.trim() !== "" && !wasAutofilled) {
-      return false;
-    }
     setInputValue(input, answer);
     input.dataset[AUTOFILL_MARKER] = "true";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.focus();
+    input.select();
     return true;
-  }
-
-  function clearPreviousAutofill(input) {
-    if (input.dataset[AUTOFILL_MARKER] !== "true") {
-      return;
-    }
-    setInputValue(input, "");
-    delete input.dataset[AUTOFILL_MARKER];
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   function setInputValue(input, value) {
@@ -179,22 +459,26 @@
     );
     if (typeof descriptor?.set === "function") {
       descriptor.set.call(input, value);
+    } else {
+      input.value = value;
     }
   }
 
-  function refreshCaptcha(image) {
-    if (
-      automaticRefreshes >= MAX_AUTOMATIC_REFRESHES ||
-      !image.isConnected ||
-      !image.matches(CAPTCHA_IMAGE_SELECTOR)
-    ) {
-      return;
+  function challengeUrl(image) {
+    if (!image) {
+      return "";
     }
-    automaticRefreshes += 1;
-    image.click();
+    return (
+      validatedCaptchaUrl(image.currentSrc || image.src) ||
+      image.dataset.rtaOcrOriginal ||
+      ""
+    );
   }
 
   function validatedCaptchaUrl(value) {
+    if (!value) {
+      return "";
+    }
     try {
       const url = new URL(value, location.href);
       const keys = [...url.searchParams.keys()];

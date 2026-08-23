@@ -6,7 +6,7 @@ This policy applies to the Chrome / Microsoft Edge extension **RTA Captcha OCR**
 
 ## What the extension does
 
-The extension runs only on `https://sso.rta-os.com/` and fetches the captcha image from `https://mansso.rta-os.com/getVerifyCodeImg`. It reads that image, recognizes five hexadecimal characters on your computer, and may fill the captcha input (`#verifyCode`). It does not submit the login form.
+The extension runs on `https://sso.rta-os.com/`, `https://mansso.rta-os.com/`, and `https://partner.rta-os.com/` login pages (including SSO iframes). It prefers to read the captcha already shown on screen. Only if that image cannot be read locally does it fetch `https://mansso.rta-os.com/getVerifyCodeImg`. It recognizes five hexadecimal characters on your computer and fills the captcha input (`#verifyCode`) when you double-click the field or click the toolbar icon. It does not submit the login form.
 
 ## Data the extension handles
 

@@ -278,6 +278,9 @@
     }
     event.preventDefault();
     event.stopPropagation();
+    if (captchaInput) {
+      captchaInput.title = "正在辨識驗證碼…";
+    }
     void fillCachedAnswer();
   }
 
@@ -302,7 +305,7 @@
         fillCaptchaInput(answer);
       }
     } catch {
-      return;
+      hint(input, "辨識失敗。點驗證碼換圖後再雙擊");
     }
   }
 
@@ -519,12 +522,21 @@
     }
   }
 
+  function hint(input, text) {
+    if (input) {
+      input.title = text;
+    }
+  }
+
   function fillCaptchaInput(answer) {
     const input = getCaptchaInput();
     if (!input || !ANSWER_PATTERN.test(answer)) {
       return false;
     }
     setInputValue(input, answer);
+    hint(input, "已填入。可再雙擊重填");
+    input.focus();
+    input.select();
     input.dataset[AUTOFILL_MARKER] = "true";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));

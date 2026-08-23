@@ -25,7 +25,7 @@
    | 欄位 | 建議 |
    | --- | --- |
    | 名稱 | RTA Captcha OCR |
-   | 簡短說明 | 在 RTA SSO 登入頁以本機 OCR 填入五碼驗證碼，不讀取帳密、不送出登入。 |
+   | 簡短說明 | 在 RTA 登入頁以本機 OCR 辨識五碼驗證碼；雙擊輸入欄才填入，不讀帳密、不送出登入。 |
    | 詳細說明 | 見下方「商店詳細說明」 |
    | 類別 | Productivity 或 Accessibility |
    | 語言 | 中文（繁體） |
@@ -35,7 +35,7 @@
 5. **單一用途**：協助使用者在 RTA SSO 登入頁辨識畫面上的驗證碼圖片。
 6. **權限說明**（後台問卷請據實填）：
    - `offscreen`：在獨立文件跑 OCR Worker，不占用登入頁執行緒。
-   - `https://sso.rta-os.com/*`：只在正式登入頁注入 content script。
+   - `https://sso.rta-os.com/*`：在正式登入頁注入 content script（partner / mansso 亦會注入，但不另要 host permission）。
    - `https://mansso.rta-os.com/*`：只抓該頁已顯示的 `/getVerifyCodeImg` 圖片。
    - 遠端程式碼：沒有。
    - 使用者資料：只在本機處理驗證碼圖片與答案，不上傳。
@@ -46,14 +46,15 @@ Edge 附加元件中心是另一個後台（https://partner.microsoft.com/dashbo
 
 ## 商店詳細說明（可直接貼）
 
-RTA Captcha OCR 只在 RTA 合作夥伴 SSO 登入頁（sso.rta-os.com）運作。
+RTA Captcha OCR 只在 RTA 合作夥伴登入流程（sso / mansso / partner.rta-os.com）運作。
 
-它會讀取頁面上的驗證碼圖片，在你的電腦裡用內建 OCR 辨識五位十六進位字元，並在有把握時填入驗證碼欄位。它不會讀取帳號或密碼，也不會按下登入。
+它會在背景讀取頁面上的驗證碼圖片，在你的電腦裡用內建 OCR 辨識五位十六進位字元。雙擊驗證碼欄或點工具列圖示才填入。它不會讀取帳號或密碼，也不會按下登入。
 
 特色：
 
 - 完全本機辨識，沒有 Tesseract，也沒有遠端 OCR / 2Captcha
-- 不確定時不亂填，最多自動換圖 4 次
+- 背景先算好，雙擊才填；不確定時不亂填
+- 離開登入頁即釋放 OCR Worker
 - 權限僅限 sso.rta-os.com 與 mansso.rta-os.com
 - 原始碼公開：https://github.com/Miku0139oao/rta-captcha-chrome
 

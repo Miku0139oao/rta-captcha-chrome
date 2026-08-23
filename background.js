@@ -3,18 +3,24 @@ import {
   REQUEST_ID_PATTERN,
   hasImageSignature,
   isTrustedSSOPageUrl,
+  parsePixelJob,
   validateCaptchaUrl,
 } from "./lib/protocol.js";
 
 const CONTENT_MESSAGE_TYPE = "RTA_CAPTCHA_SOLVE";
+const WARMUP_MESSAGE_TYPE = "RTA_CAPTCHA_WARMUP";
+const RELEASE_MESSAGE_TYPE = "RTA_CAPTCHA_RELEASE";
+const FILL_MESSAGE_TYPE = "RTA_CAPTCHA_FILL";
 const OFFSCREEN_PORT_NAME = "rta-ocr-offscreen-v1";
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 12_000;
 const OCR_TIMEOUT_MS = 20_000;
+const IDLE_RELEASE_MS = 20_000;
 
 let offscreenPort = null;
 let offscreenCreation = null;
+let idleTimer = 0;
 const portWaiters = new Set();
 const pendingJobs = new Map();
 
@@ -43,11 +49,34 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === RELEASE_MESSAGE_TYPE) {
+    if (!isTrustedContentSender(sender)) {
+      sendResponse({ ok: false, reason: "rejected" });
+      return false;
+    }
+    void releaseOffscreen().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (message?.type === WARMUP_MESSAGE_TYPE) {
+    if (!isTrustedContentSender(sender)) {
+      sendResponse({ ok: false, reason: "rejected" });
+      return false;
+    }
+    void warmupEngine().then(sendResponse);
+    return true;
+  }
   if (message?.type !== CONTENT_MESSAGE_TYPE) {
     return false;
   }
   void handleContentRequest(message, sender).then(sendResponse);
   return true;
+});
+
+chrome.action.onClicked.addListener((tab) => {
+  if (!Number.isInteger(tab?.id)) {
+    return;
+  }
+  chrome.tabs.sendMessage(tab.id, { type: FILL_MESSAGE_TYPE }).catch(() => undefined);
 });
 
 async function handleContentRequest(message, sender) {
@@ -56,6 +85,17 @@ async function handleContentRequest(message, sender) {
     !REQUEST_ID_PATTERN.test(String(message.requestId ?? ""))
   ) {
     return { ok: false, reason: "rejected" };
+  }
+
+  const pixels = parsePixelJob(message);
+  if (pixels) {
+    try {
+      const result = await sendOCRJob(pixels);
+      bumpIdleRelease();
+      return sanitizeSolveResult(result);
+    } catch {
+      return { ok: false, reason: "unreadable" };
+    }
   }
 
   let captchaUrl;
@@ -67,35 +107,32 @@ async function handleContentRequest(message, sender) {
 
   let imageBase64;
   try {
-    const imageBytes = await fetchCaptchaBytes(captchaUrl);
-    imageBase64 = bytesToBase64(imageBytes);
+    imageBase64 = bytesToBase64(await fetchCaptchaBytes(captchaUrl));
   } catch {
     return { ok: false, reason: "temporary-failure" };
   }
 
   try {
-    const result = await sendOCRJob(imageBase64);
-    if (result.ok && ANSWER_PATTERN.test(result.answer)) {
-      return { ok: true, answer: result.answer };
-    }
-    return {
-      ok: false,
-      reason: result.reason === "uncertain" ? "uncertain" : "unreadable",
-    };
+    const result = await sendOCRJob({ imageBase64 });
+    bumpIdleRelease();
+    return { ...sanitizeSolveResult(result), imageBase64 };
   } catch {
-    // The fetch above creates the newest challenge for this flag. If local
-    // processing then fails, the page must refresh instead of showing a stale
-    // image that no longer corresponds to the server-side answer.
-    return { ok: false, reason: "unreadable" };
+    return { ok: false, reason: "unreadable", imageBase64 };
   }
 }
 
+function sanitizeSolveResult(result) {
+  if (result?.ok && ANSWER_PATTERN.test(result.answer)) {
+    return { ok: true, answer: result.answer };
+  }
+  return {
+    ok: false,
+    reason: result?.reason === "uncertain" ? "uncertain" : "unreadable",
+  };
+}
+
 function isTrustedContentSender(sender) {
-  if (
-    sender?.id !== chrome.runtime.id ||
-    sender.frameId !== 0 ||
-    typeof sender.url !== "string"
-  ) {
+  if (sender?.id !== chrome.runtime.id || typeof sender.url !== "string") {
     return false;
   }
   try {
@@ -163,7 +200,17 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
-async function sendOCRJob(imageBase64) {
+async function warmupEngine() {
+  try {
+    await sendOCRJob({ warmup: true });
+    bumpIdleRelease();
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: "temporary-failure" };
+  }
+}
+
+async function sendOCRJob(job) {
   const port = await ensureOffscreenPort();
   const id = crypto.randomUUID();
   return new Promise((resolve, reject) => {
@@ -173,7 +220,22 @@ async function sendOCRJob(imageBase64) {
     }, OCR_TIMEOUT_MS);
     pendingJobs.set(id, { resolve, reject, timeout });
     try {
-      port.postMessage({ type: "solve", id, imageBase64 });
+      if (job.warmup) {
+        port.postMessage({ type: "warmup", id });
+      } else if (job.buffer instanceof ArrayBuffer) {
+        port.postMessage(
+          {
+            type: "solve",
+            id,
+            width: job.width,
+            height: job.height,
+            buffer: job.buffer,
+          },
+          [job.buffer],
+        );
+      } else {
+        port.postMessage({ type: "solve", id, imageBase64: job.imageBase64 });
+      }
     } catch (error) {
       clearTimeout(timeout);
       pendingJobs.delete(id);
@@ -192,6 +254,10 @@ function handleOffscreenMessage(message) {
   }
   pendingJobs.delete(message.id);
   clearTimeout(pending.timeout);
+  if (message.ok === true && message.warmed === true) {
+    pending.resolve({ ok: true, warmed: true });
+    return;
+  }
   if (message.ok === true && ANSWER_PATTERN.test(String(message.answer ?? ""))) {
     pending.resolve({ ok: true, answer: message.answer });
     return;
@@ -208,6 +274,28 @@ function rejectPendingJobs(error) {
     pending.reject(error);
   }
   pendingJobs.clear();
+}
+
+function bumpIdleRelease() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    void releaseOffscreen();
+  }, IDLE_RELEASE_MS);
+}
+
+async function releaseOffscreen() {
+  clearTimeout(idleTimer);
+  idleTimer = 0;
+  if (pendingJobs.size > 0) {
+    bumpIdleRelease();
+    return;
+  }
+  if (offscreenPort) {
+    offscreenPort.disconnect();
+    offscreenPort = null;
+  }
+  offscreenCreation = null;
+  await chrome.offscreen.closeDocument().catch(() => undefined);
 }
 
 async function ensureOffscreenPort() {

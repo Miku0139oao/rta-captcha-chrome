@@ -3,6 +3,7 @@ import {
   OCRInputError,
   OCRUncertainError,
 } from "./solver.js";
+import { parsePixelJob } from "../lib/protocol.js";
 
 const MAX_ENCODED_LENGTH = 6 * 1024 * 1024;
 const ANSWER_PATTERN = /^[0-9a-f]{5}$/;
@@ -14,21 +15,19 @@ self.addEventListener("message", (event) => {
 
 async function handleMessage(message) {
   const id = isJobId(message?.id) ? message.id : "invalid";
-  if (
-    message?.type !== "solve" ||
-    !isJobId(message.id) ||
-    typeof message.imageBase64 !== "string" ||
-    message.imageBase64.length === 0 ||
-    message.imageBase64.length > MAX_ENCODED_LENGTH
-  ) {
+  if (message?.type === "warmup" && isJobId(message.id)) {
+    getSolver();
+    self.postMessage({ id, ok: true, warmed: true });
+    return;
+  }
+  if (message?.type !== "solve" || !isJobId(message.id)) {
     self.postMessage({ id, ok: false, reason: "invalid-request" });
     return;
   }
 
   try {
-    const image = await decodeImage(message.imageBase64);
-    solver ??= new EmbeddedOCRSolver();
-    const answer = solver.solve(image);
+    const image = await resolveImage(message);
+    const answer = getSolver().solve(image);
     if (!ANSWER_PATTERN.test(answer)) {
       throw new OCRInputError("OCR returned an invalid answer", "invalid-answer");
     }
@@ -40,6 +39,30 @@ async function handleMessage(message) {
       reason: classifyError(error),
     });
   }
+}
+
+async function resolveImage(message) {
+  const pixels = parsePixelJob(message);
+  if (pixels) {
+    return {
+      width: pixels.width,
+      height: pixels.height,
+      data: new Uint8ClampedArray(pixels.buffer),
+    };
+  }
+  if (
+    typeof message.imageBase64 === "string" &&
+    message.imageBase64.length > 0 &&
+    message.imageBase64.length <= MAX_ENCODED_LENGTH
+  ) {
+    return decodeImage(message.imageBase64);
+  }
+  throw new OCRInputError("Invalid OCR request", "invalid-request");
+}
+
+function getSolver() {
+  solver ??= new EmbeddedOCRSolver();
+  return solver;
 }
 
 async function decodeImage(imageBase64) {

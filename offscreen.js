@@ -4,14 +4,11 @@ const MAX_ENCODED_LENGTH = 6 * 1024 * 1024;
 
 let backgroundPort = null;
 let ocrWorker = null;
-let reconnectTimer = null;
 const activeJobs = new Set();
 
 connectToBackground();
-ensureWorker();
 
 function connectToBackground() {
-  clearTimeout(reconnectTimer);
   const port = chrome.runtime.connect({ name: PORT_NAME });
   backgroundPort = port;
   port.onMessage.addListener((message) => {
@@ -23,29 +20,67 @@ function connectToBackground() {
     }
     activeJobs.clear();
     resetWorker();
-    reconnectTimer = setTimeout(connectToBackground, 250);
   });
 }
 
 function handleBackgroundMessage(message, sourcePort) {
   if (
     sourcePort !== backgroundPort ||
-    message?.type !== "solve" ||
-    !REQUEST_ID_PATTERN.test(String(message.id ?? "")) ||
-    typeof message.imageBase64 !== "string" ||
-    message.imageBase64.length === 0 ||
-    message.imageBase64.length > MAX_ENCODED_LENGTH ||
+    !REQUEST_ID_PATTERN.test(String(message?.id ?? "")) ||
     activeJobs.has(message.id)
   ) {
     return;
   }
 
+  if (message.type === "warmup") {
+    activeJobs.add(message.id);
+    ensureWorker().postMessage({ type: "warmup", id: message.id });
+    return;
+  }
+
+  if (message.type !== "solve") {
+    return;
+  }
+
+  const pixelJob = isPixelMessage(message);
+  const encodedJob =
+    typeof message.imageBase64 === "string" &&
+    message.imageBase64.length > 0 &&
+    message.imageBase64.length <= MAX_ENCODED_LENGTH;
+
+  if (!pixelJob && !encodedJob) {
+    return;
+  }
+
   activeJobs.add(message.id);
-  ensureWorker().postMessage({
+  const worker = ensureWorker();
+  if (pixelJob) {
+    worker.postMessage(
+      {
+        type: "solve",
+        id: message.id,
+        width: message.width,
+        height: message.height,
+        buffer: message.buffer,
+      },
+      message.buffer instanceof ArrayBuffer ? [message.buffer] : [],
+    );
+    return;
+  }
+  worker.postMessage({
     type: "solve",
     id: message.id,
     imageBase64: message.imageBase64,
   });
+}
+
+function isPixelMessage(message) {
+  return (
+    Number.isInteger(message.width) &&
+    Number.isInteger(message.height) &&
+    message.buffer instanceof ArrayBuffer &&
+    message.buffer.byteLength === message.width * message.height * 4
+  );
 }
 
 function ensureWorker() {
@@ -78,6 +113,9 @@ function ensureWorker() {
 }
 
 function sanitizeWorkerResponse(message) {
+  if (message.ok === true && message.warmed === true) {
+    return { id: message.id, ok: true, warmed: true };
+  }
   if (message.ok === true && /^[0-9a-f]{5}$/.test(String(message.answer ?? ""))) {
     return { id: message.id, ok: true, answer: message.answer };
   }

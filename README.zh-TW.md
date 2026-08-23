@@ -4,7 +4,7 @@
 
 這是一個完全離線辨識 RTA SSO 驗證碼的 Chrome Manifest V3 擴充功能。OCR 是 `rta-sales-client-go` `EmbeddedOCRSolver` 的 JavaScript 移植版，固定辨識 5 位十六進位字元，使用內建的 15×21 learned、supplemental 與 fitted 模板。辨識結果不夠確定時不猜答案，而是要求頁面換一張驗證碼；連續自動刷新最多 4 次。
 
-擴充功能只會填入目前 RTA 登入頁的 `input#verifyCode[name="input-verify_code"]`。它不會讀取帳號或密碼欄位、不會提交登入表單，也不會儲存登入資料。
+驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄**（或點工具列圖示）才填入。它不會讀取帳號或密碼欄位、不會提交登入表單，也不會儲存登入資料。
 
 ## 安裝
 
@@ -15,7 +15,7 @@
    https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
 3. 按「安裝」。
 4. 從 `https://partner.rta-os.com/` 進入登入。驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄**才填入。頁面上沒有浮層。登入仍由你送出。
-5. 若已安裝舊版，到 Tampermonkey 儀表板刪除後重裝（版本需為 **1.0.7**）。
+5. 若已安裝舊版，到 Tampermonkey 儀表板刪除後重裝（版本需為 **1.0.8**）。
 
 Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次向 `mansso.rta-os.com` 取圖時，Tampermonkey 可能問你是否允許網域，選允許。
 
@@ -28,7 +28,7 @@ Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次向 `manss
 3. Chrome 網址列輸入 `chrome://extensions/` 後 Enter。
 4. 右上角打開「開發人員模式」。
 5. 按「載入未封裝項目」，選**解壓縮後的那個資料夾**（不要選 zip 檔本身）。
-6. 開啟 `https://sso.rta-os.com/` 登入頁。驗證碼圖片載入後，擴充功能會在本機辨識並填入驗證碼欄位；登入仍由你自己確認後送出。
+6. 開啟 RTA 登入頁（`partner.rta-os.com` 或 `sso.rta-os.com`）。圖出來後**雙擊驗證碼輸入欄**（或點工具列圖示）填入；登入仍由你自己確認後送出。
 
 Microsoft Edge 按鈕名稱不同，流程一樣：
 
@@ -51,12 +51,12 @@ git clone https://github.com/Miku0139oao/rta-captcha-chrome.git
 
 資料流刻意分成四個隔離層：
 
-1. `content.js` 僅在 `sso.rta-os.com` 最上層頁面執行，只尋找已確認的驗證碼圖片與驗證碼輸入框。
-2. `background.js` 驗證訊息來源、頁框、URL host、path、query 名稱與 32 位 flag，然後只向 `mansso.rta-os.com/getVerifyCodeImg` 取得圖片。
-3. `offscreen.html` / `offscreen.js` 透過經過來源驗證的私有 long-lived port 接收工作，頁面內容無法直接取得此 port。
+1. `content.js` 在 `sso` / `mansso` / `partner`（含 SSO iframe）執行。登入頁才監看；優先擷取畫面上的像素，雙擊才填入。
+2. `background.js` 驗證訊息來源與 captcha URL。能讀到畫面像素就不重抓圖；否則才向 `mansso.rta-os.com/getVerifyCodeImg` 取圖並回傳給頁面換上新圖。閒置 20 秒關閉 OCR 文件。
+3. `offscreen.html` / `offscreen.js` 透過經過來源驗證的私有 port 接收工作，有需要才建立 Worker。
 4. `ocr/worker.js` 在 dedicated Web Worker 內解碼圖片，`ocr/solver.js` 執行 OCR。OCR 不占用 RTA 頁面的主執行緒。
 
-Worker 只回傳符合 `^[0-9a-f]{5}$` 的答案。兩種正規化模型不一致、距離大於 `0.20`，或最佳與次佳的 margin 小於 `0.02` 時會 fail closed。無法辨識時，content script 只會對 `#verifyCodeMsg` 觸發刷新，不會碰觸其他按鈕或送出表單。
+Worker 只回傳符合 `^[0-9a-f]{5}$` 的答案。兩種正規化模型不一致、距離大於 `0.20`，或最佳與次佳的 margin 小於 `0.02` 時會 fail closed。無法辨識時不自動換圖、不送出表單；請自行點驗證碼圖換一張後再雙擊。
 
 ## 權限理由
 
@@ -65,7 +65,7 @@ Worker 只回傳符合 `^[0-9a-f]{5}$` 的答案。兩種正規化模型不一�
 | 權限 | 用途 |
 | --- | --- |
 | `offscreen` | 建立不顯示 UI 的 extension document，以承載本機 OCR Worker。 |
-| `https://sso.rta-os.com/*` | 只在正式 RTA SSO 頁面載入 content script，並驗證訊息來源。 |
+| `https://sso.rta-os.com/*` | 在正式 RTA SSO 頁面載入 content script，並驗證訊息來源。partner / mansso 也會注入腳本，但沒有額外 host permission。 |
 | `https://mansso.rta-os.com/*` | 只取得實際的 RTA 驗證碼圖片；程式另行把 path 鎖定為 `/getVerifyCodeImg`，並嚴格驗證唯一的 `verifyCodeFlag` query。Chrome match pattern 無法把 host permission 限制到單一路徑，因此再由程式執行 path allowlist。 |
 
 沒有要求 `activeTab`、`cookies`、`history`、`scripting`、`storage`、`tabs`、`webRequest` 或 `<all_urls>`，也沒有 `web_accessible_resources`。

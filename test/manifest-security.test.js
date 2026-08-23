@@ -25,12 +25,14 @@ test("manifest is MV3 with the minimum permission surface", () => {
   });
 });
 
-test("content script is statically limited to the SSO top frame", () => {
+test("content script is limited to RTA login hosts, including SSO iframes", () => {
   assert.equal(manifest.content_scripts.length, 1);
   assert.deepEqual(manifest.content_scripts[0].matches, [
     "https://sso.rta-os.com/*",
+    "https://mansso.rta-os.com/*",
+    "https://partner.rta-os.com/*",
   ]);
-  assert.equal(manifest.content_scripts[0].all_frames, false);
+  assert.equal(manifest.content_scripts[0].all_frames, true);
   assert.equal(manifest.content_scripts[0].match_about_blank, false);
   assert.ok(!JSON.stringify(manifest).includes("<all_urls>"));
   assert.ok(!JSON.stringify(manifest).includes("http://"));
@@ -64,7 +66,7 @@ test("all executable code is packaged locally and does not use eval", async () =
   }
 });
 
-test("architecture keeps OCR out of the page content script", async () => {
+test("architecture keeps OCR out of the page and fills only on demand", async () => {
   const [content, background, offscreen] = await Promise.all([
     readFile(path.join(projectRoot, "content.js"), "utf8"),
     readFile(path.join(projectRoot, "background.js"), "utf8"),
@@ -72,13 +74,19 @@ test("architecture keeps OCR out of the page content script", async () => {
   ]);
   assert.match(content, /img#verifyCodeMsg/);
   assert.match(content, /input#verifyCode\[name=/);
+  assert.match(content, /dblclick/);
+  assert.match(content, /prefetchCurrentCaptcha/);
+  assert.match(content, /RTA_CAPTCHA_RELEASE/);
   assert.doesNotMatch(content, /querySelector(?:All)?\([^)]*(?:account|password)/i);
   assert.doesNotMatch(content, /EmbeddedOCRSolver|templates\.generated/);
   assert.doesNotMatch(content, /\.click\(\).*login|submit\s*\(/i);
   assert.match(background, /chrome\.offscreen\.createDocument/);
+  assert.match(background, /closeDocument/);
+  assert.match(background, /parsePixelJob/);
   assert.match(offscreen, /new Worker\(/);
   assert.match(offscreen, /ocr\/worker\.js/);
-  assert.match(offscreen, /connectToBackground\(\);\s*ensureWorker\(\);/);
+  assert.match(offscreen, /connectToBackground\(\);/);
+  assert.doesNotMatch(offscreen, /connectToBackground\(\);\s*ensureWorker\(\);/);
 });
 
 test("credential and broad browsing APIs are not requested or called", async () => {

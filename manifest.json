@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "RTA Captcha OCR",
-  "version": "1.0.0",
-  "description": "在本機辨識 RTA SSO 的五位十六進位驗證碼，僅自動填入驗證碼欄位。",
+  "version": "1.0.8",
+  "description": "本機辨識 RTA 驗證碼。背景預先算好，雙擊輸入欄或點工具列圖示填入。不讀帳密、不送出登入。",
   "homepage_url": "https://github.com/Miku0139oao/rta-captcha-chrome",
   "minimum_chrome_version": "109",
   "icons": {
@@ -12,7 +12,7 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_title": "RTA Captcha OCR",
+    "default_title": "填入 RTA 驗證碼",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -34,13 +34,15 @@
   "content_scripts": [
     {
       "matches": [
-        "https://sso.rta-os.com/*"
+        "https://sso.rta-os.com/*",
+        "https://mansso.rta-os.com/*",
+        "https://partner.rta-os.com/*"
       ],
       "js": [
         "content.js"
       ],
       "run_at": "document_idle",
-      "all_frames": false,
+      "all_frames": true,
       "match_about_blank": false
     }
   ],

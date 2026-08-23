@@ -1,6 +1,7 @@
 node_modules/
 coverage/
 *.zip
+rta-captcha-chrome-*.zip
 .tmp/
 .DS_Store
 Thumbs.db

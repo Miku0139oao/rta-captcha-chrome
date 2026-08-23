@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   hasImageSignature,
   isTrustedSSOPageUrl,
+  parsePixelJob,
   validateCaptchaUrl,
 } from "../lib/protocol.js";
 
@@ -29,16 +30,38 @@ test("captcha URL validator accepts only the production endpoint contract", () =
   }
 });
 
-test("SSO sender URL validator requires the exact HTTPS origin", () => {
+test("SSO sender URL validator allows RTA login hosts only", () => {
   assert.equal(isTrustedSSOPageUrl("https://sso.rta-os.com/"), true);
   assert.equal(
     isTrustedSSOPageUrl("https://sso.rta-os.com/#index/sso/login"),
     true,
   );
+  assert.equal(isTrustedSSOPageUrl("https://mansso.rta-os.com/login"), true);
+  assert.equal(isTrustedSSOPageUrl("https://partner.rta-os.com/"), true);
   assert.equal(isTrustedSSOPageUrl("http://sso.rta-os.com/"), false);
   assert.equal(isTrustedSSOPageUrl("https://sso.rta-os.com.evil.test/"), false);
   assert.equal(isTrustedSSOPageUrl("https://user@sso.rta-os.com/"), false);
+  assert.equal(isTrustedSSOPageUrl("https://shop.rta-os.com/"), false);
   assert.equal(isTrustedSSOPageUrl("not a URL"), false);
+});
+
+test("pixel job parser accepts only well-sized RGBA buffers", () => {
+  const width = 20;
+  const height = 16;
+  const buffer = new ArrayBuffer(width * height * 4);
+  assert.deepEqual(parsePixelJob({ width, height, buffer }), {
+    width,
+    height,
+    buffer,
+  });
+  const fromView = parsePixelJob({ width, height, buffer: new Uint8Array(buffer) });
+  assert.equal(fromView?.width, width);
+  assert.equal(fromView?.height, height);
+  assert.equal(fromView?.buffer.byteLength, buffer.byteLength);
+  assert.equal(parsePixelJob({ width: 7, height, buffer }), null);
+  assert.equal(parsePixelJob({ width, height: 8, buffer }), null);
+  assert.equal(parsePixelJob({ width, height, buffer: new ArrayBuffer(4) }), null);
+  assert.equal(parsePixelJob({ width: "20", height, buffer }), null);
 });
 
 test("image signature validator accepts supported local decode formats", () => {

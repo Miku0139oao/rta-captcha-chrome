@@ -4,7 +4,7 @@ English | [繁體中文](README.zh-TW.md)
 
 A loadable Chrome Manifest V3 extension that reads the RTA SSO login captcha **on your computer**. It is a JavaScript port of [`EmbeddedOCRSolver`](https://github.com/Miku0139oao/rta-sales-client-go) from [rta-sales-client-go](https://github.com/Miku0139oao/rta-sales-client-go): five hexadecimal characters (`0-9a-f`), 15×21 glyph templates, color clustering, Otsu thresholding, and fail-closed matching. There is no Tesseract, GPU, remote OCR, or 2Captcha.
 
-The extension fills only `input#verifyCode[name="input-verify_code"]`. It does not read the account or password fields, does not submit the login form, and does not store credentials.
+It prefetches the captcha in the background and fills only when you **double-click** the captcha field (or click the toolbar icon). It does not read account or password fields, does not submit the login form, and does not store credentials.
 
 ## Install
 
@@ -27,7 +27,7 @@ This is **not yet listed** on the Chrome Web Store (publishing has to be submitt
 3. Go to `chrome://extensions/`.
 4. Turn on **Developer mode**.
 5. Click **Load unpacked** and select the **extracted folder** (not the zip file).
-6. Open `https://sso.rta-os.com/`. When the captcha image loads, the extension fills the captcha field if it is confident. You still confirm and submit the login yourself.
+6. Open the RTA login page (`partner.rta-os.com` or `sso.rta-os.com`). When the captcha image appears, **double-click the captcha input** (or click the toolbar icon) to fill it. You still confirm and submit the login yourself.
 
 Microsoft Edge uses different button labels for the same flow:
 
@@ -50,12 +50,12 @@ Then follow steps 3–6 above and select the cloned repository root. Do not run 
 
 | Layer | Role |
 | --- | --- |
-| `content.js` | Runs only on `sso.rta-os.com`. Finds `#verifyCodeMsg` and the captcha input. |
-| `background.js` | Checks the sender, then fetches `https://mansso.rta-os.com/getVerifyCodeImg?verifyCodeFlag=…`. |
-| `offscreen.js` | Isolated host for the OCR worker. Pages cannot open this port. |
+| `content.js` | Runs on `sso` / `mansso` / `partner` (including SSO iframes). Prefetches; double-click fills. |
+| `background.js` | Checks the sender, OCRs on-screen pixels when possible, otherwise fetches the captcha image. Closes the OCR document after 20s idle. |
+| `offscreen.js` | Isolated host for the OCR worker. Created lazily; pages cannot open this port. |
 | `ocr/worker.js` | Decodes the image and runs the solver off the login page thread. |
 
-Uncertain answers (distance &gt; 0.20 or margin &lt; 0.02) are not filled. The content script clicks `#verifyCodeMsg` to request a new image, at most four times.
+Uncertain answers (distance &gt; 0.20 or margin &lt; 0.02) are not filled. The page is not auto-refreshed; click the captcha image yourself if you need a new one.
 
 Permissions are limited to `offscreen`, `https://sso.rta-os.com/*`, and `https://mansso.rta-os.com/*`. See [README.zh-TW.md](README.zh-TW.md) for the full security notes.
 

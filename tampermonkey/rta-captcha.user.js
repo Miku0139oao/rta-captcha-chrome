@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.0.7
+// @version      1.0.8
 // @description  僅在登入頁背景辨識驗證碼；雙擊輸入欄填入。閒置釋放 Worker。不自動登入。
 // @author       Miku0139oao
 // @license      MIT
@@ -305,6 +305,9 @@
     }
     event.preventDefault();
     event.stopPropagation();
+    if (captchaInput) {
+      captchaInput.title = "正在辨識驗證碼…";
+    }
     void fillCachedAnswer();
   }
 
@@ -329,7 +332,7 @@
         fillCaptchaInput(answer);
       }
     } catch {
-      return;
+      hint(input, "辨識失敗。點驗證碼換圖後再雙擊");
     }
   }
 
@@ -546,12 +549,21 @@
     }
   }
 
+  function hint(input, text) {
+    if (input) {
+      input.title = text;
+    }
+  }
+
   function fillCaptchaInput(answer) {
     const input = getCaptchaInput();
     if (!input || !ANSWER_PATTERN.test(answer)) {
       return false;
     }
     setInputValue(input, answer);
+    hint(input, "已填入。可再雙擊重填");
+    input.focus();
+    input.select();
     input.dataset[AUTOFILL_MARKER] = "true";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
