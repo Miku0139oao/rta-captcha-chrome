@@ -12,7 +12,6 @@
   ];
   const FLAG_PATTERN = /^[0-9a-f]{32}$/i;
   const ANSWER_PATTERN = /^[0-9a-f]{5}$/;
-  const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const AUTOFILL_MARKER = "rtaCaptchaOcrAutofilled";
 
   let worker = null;
@@ -281,27 +280,35 @@
     return localSolver;
   }
 
+  document.addEventListener(
+    "click",
+    (event) => {
+      const image = event.target instanceof Element ? event.target.closest("img") : null;
+      if (!image || findCaptchaImage() !== image) {
+        return;
+      }
+      cache = { token: "", answer: "", error: null, job: null };
+    },
+    true,
+  );
+
   function onDoubleClick(event) {
     const target = event.target;
     if (!(target instanceof Element)) {
       return;
     }
-    const input = target.closest("input") || getCaptchaInput();
-    const image = target.closest("img");
     const captchaInput = getCaptchaInput();
-    const captchaImage = findCaptchaImage();
+    if (!captchaInput) {
+      return;
+    }
     const hitInput =
-      captchaInput &&
-      (target === captchaInput || captchaInput.contains(target) || input === captchaInput);
-    const hitImage = captchaImage && image === captchaImage;
-    if (!hitInput && !hitImage) {
+      target === captchaInput ||
+      captchaInput.contains(target) ||
+      target.closest("input") === captchaInput;
+    if (!hitInput) {
       return;
     }
     event.preventDefault();
-    event.stopPropagation();
-    if (captchaInput) {
-      captchaInput.title = "正在辨識驗證碼…";
-    }
     void fillCachedAnswer();
   }
 
@@ -315,96 +322,30 @@
     const tokenBefore = imageToken(image);
     prefetchCurrentCaptcha();
     try {
-      let result = null;
-      if (cache.token === tokenBefore && cache.answer) {
-        result = { answer: cache.answer, token: cache.token };
-      } else {
-        result = await solveWithRetries(3, input);
+      let answer = cache.token === tokenBefore ? cache.answer : "";
+      if (!answer && cache.token === tokenBefore && cache.job) {
+        answer = await cache.job;
       }
-      if (result.token === cache.token && !cache.answer) {
-        cache = { ...cache, answer: result.answer, error: null, job: null };
+      if (!answer) {
+        answer = await recognize(image, tokenBefore);
+        cache = { token: tokenBefore, answer, error: null, job: null };
       }
       const latest = findCaptchaImage();
       if (
-        ANSWER_PATTERN.test(result.answer) &&
+        ANSWER_PATTERN.test(answer) &&
         latest instanceof HTMLImageElement &&
-        imageToken(latest) === result.token
+        imageToken(latest) === tokenBefore
       ) {
-        fillCaptchaInput(result.answer);
-      } else {
-        hint(input, "辨識失敗。點驗證碼換圖後再雙擊");
+        fillCaptchaInput(answer);
+        hint(input, "");
       }
     } catch {
-      hint(input, "辨識失敗。點驗證碼換圖後再雙擊");
+      hint(input, "辨識失敗。請點驗證碼圖片換圖後再雙擊輸入欄");
     }
-  }
-
-  async function solveWithRetries(maxAttempts, input) {
-    let lastError = null;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const image = findCaptchaImage();
-      if (!(image instanceof HTMLImageElement)) {
-        throw lastError || new Error("captcha not found");
-      }
-      const token = imageToken(image);
-      try {
-        const answer = await recognize(image, token);
-        return { answer, token };
-      } catch (error) {
-        lastError = error;
-        if (attempt + 1 >= maxAttempts) {
-          break;
-        }
-        hint(input, "選沒把握，自動換一張再試…");
-        const refreshed = await refreshCaptchaImage(image);
-        if (!refreshed) {
-          break;
-        }
-      }
-    }
-    throw lastError || new Error("ocr failed");
-  }
-
-  function refreshCaptchaImage(image) {
-    return new Promise((resolve) => {
-      if (!image.isConnected) {
-        resolve(false);
-        return;
-      }
-      const before = imageToken(image);
-      let settled = false;
-      const timeout = window.setTimeout(() => done(false), 6000);
-      function done(ok) {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        window.clearTimeout(timeout);
-        image.removeEventListener("load", onLoad);
-        resolve(ok);
-      }
-      function onLoad() {
-        window.setTimeout(() => done(imageToken(image) !== before), 50);
-      }
-      image.addEventListener("load", onLoad);
-      // Same as a user click: the page itself fetches a fresh challenge,
-      // so the on-screen pixels and the server-side answer stay in sync.
-      image.click();
-    });
   }
 
   async function readVisiblePixels(image) {
-    try {
-      return readCanvasPixels(image);
-    } catch {
-      const url = challengeUrl(image);
-      if (!url || url.startsWith("blob:")) {
-        throw new Error("cannot read captcha pixels");
-      }
-      const bytes = await fetchCaptchaBytes(url);
-      await showFetchedImage(image, url, bytes);
-      return bytesToImageData(bytes);
-    }
+    return readCanvasPixels(image);
   }
 
   function readCanvasPixels(image) {
@@ -422,36 +363,6 @@
     }
     context.drawImage(image, 0, 0);
     return context.getImageData(0, 0, width, height);
-  }
-
-  function showFetchedImage(image, originalUrl, bytes) {
-    const blob = new Blob([bytes]);
-    const blobUrl = URL.createObjectURL(blob);
-    return new Promise((resolve, reject) => {
-      const timeout = window.setTimeout(() => {
-        cleanup();
-        reject(new Error("blob image load timed out"));
-      }, 4000);
-      function cleanup() {
-        window.clearTimeout(timeout);
-        image.removeEventListener("load", onLoad);
-        image.removeEventListener("error", onError);
-        URL.revokeObjectURL(blobUrl);
-      }
-      function onLoad() {
-        cleanup();
-        resolve();
-      }
-      function onError() {
-        cleanup();
-        reject(new Error("blob image failed to load"));
-      }
-      image.dataset.rtaOcrOriginal = originalUrl;
-      image.dataset.rtaOcrIgnoreLoad = "1";
-      image.addEventListener("load", onLoad);
-      image.addEventListener("error", onError);
-      image.src = blobUrl;
-    });
   }
 
   function findCaptchaImage() {
@@ -517,103 +428,6 @@
     }
     const rect = element.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
-  }
-
-  function gmRequest() {
-    if (typeof GM_xmlhttpRequest === "function") {
-      return GM_xmlhttpRequest;
-    }
-    if (typeof GM !== "undefined" && typeof GM.xmlHttpRequest === "function") {
-      return GM.xmlHttpRequest;
-    }
-    return null;
-  }
-
-  function fetchCaptchaBytes(url) {
-    const request = gmRequest();
-    if (!request) {
-      return Promise.reject(new Error("GM_xmlhttpRequest is unavailable"));
-    }
-    return new Promise((resolve, reject) => {
-      request({
-        method: "GET",
-        url,
-        responseType: "arraybuffer",
-        anonymous: false,
-        timeout: 12000,
-        headers: {
-          Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        },
-        onload(response) {
-          if (response.status < 200 || response.status >= 300) {
-            reject(new Error(`captcha HTTP ${response.status}`));
-            return;
-          }
-          const buffer = response.response;
-          if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0) {
-            reject(new Error("empty captcha image"));
-            return;
-          }
-          if (buffer.byteLength > MAX_IMAGE_BYTES) {
-            reject(new Error("captcha image is too large"));
-            return;
-          }
-          const bytes = new Uint8Array(buffer);
-          if (!hasImageSignature(bytes)) {
-            reject(new Error("captcha response is not an image"));
-            return;
-          }
-          resolve(bytes);
-        },
-        onerror: () => reject(new Error("captcha request failed")),
-        ontimeout: () => reject(new Error("captcha request timed out")),
-      });
-    });
-  }
-
-  function hasImageSignature(bytes) {
-    const jpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-    const png =
-      bytes.length >= 8 &&
-      bytes[0] === 0x89 &&
-      bytes[1] === 0x50 &&
-      bytes[2] === 0x4e &&
-      bytes[3] === 0x47;
-    const gif = bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46;
-    const webp =
-      bytes.length >= 12 &&
-      bytes[0] === 0x52 &&
-      bytes[1] === 0x49 &&
-      bytes[2] === 0x46 &&
-      bytes[8] === 0x57 &&
-      bytes[9] === 0x45 &&
-      bytes[10] === 0x42 &&
-      bytes[11] === 0x50;
-    return jpeg || png || gif || webp;
-  }
-
-  async function bytesToImageData(bytes) {
-    let bitmap;
-    const rawDecodeOptions = {
-      premultiplyAlpha: "none",
-      colorSpaceConversion: "none",
-    };
-    try {
-      bitmap = await createImageBitmap(new Blob([bytes]), rawDecodeOptions);
-    } catch {
-      bitmap = await createImageBitmap(new Blob([bytes]));
-    }
-    try {
-      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-      const context = canvas.getContext("2d", { willReadFrequently: true });
-      if (!context) {
-        throw new Error("canvas 2d context is unavailable");
-      }
-      context.drawImage(bitmap, 0, 0);
-      return context.getImageData(0, 0, bitmap.width, bitmap.height);
-    } finally {
-      bitmap.close();
-    }
   }
 
   function hint(input, text) {

@@ -13,10 +13,8 @@ const userscript = await readFile(
 test("userscript has a Tampermonkey header and local OCR solver", () => {
   assert.match(userscript, /^\/\/ ==UserScript==/m);
   assert.match(userscript, /@match\s+https:\/\/\*\.rta-os\.com\/\*/);
-  assert.match(userscript, /@connect\s+mansso\.rta-os\.com/);
-  assert.match(userscript, /@connect\s+sso\.rta-os\.com/);
-  assert.match(userscript, /@grant\s+GM_xmlhttpRequest/);
-  assert.doesNotMatch(userscript, /@connect\s+\*/);
+  assert.match(userscript, /@grant\s+none/);
+  assert.doesNotMatch(userscript, /@grant\s+GM_xmlhttpRequest/);
   assert.match(userscript, /class EmbeddedOCRSolver/);
   assert.match(userscript, /dblclick/);
   assert.match(userscript, /WORKER_SOURCE/);
