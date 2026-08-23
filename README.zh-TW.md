@@ -15,7 +15,7 @@
    https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
 3. 按「安裝」。
 4. 開啟 RTA 登入頁。驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄**才填入。頁面上沒有浮層。登入仍由你送出。
-5. 若已安裝舊版，到 Tampermonkey 儀表板刪除後重裝（版本需為 **1.0.11**）。
+5. 若已安裝舊版，到 Tampermonkey 儀表板刪除後重裝（版本需為 **1.0.17**）。
 
 Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次取圖時腳本管理器可能詢問是否允許 RTA 網域，選允許。
 

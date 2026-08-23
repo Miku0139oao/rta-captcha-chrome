@@ -21,27 +21,14 @@
   let nextJobId = 1;
   const pendingJobs = new Map();
   let cache = { token: "", answer: "", error: null, job: null };
-  let observer = null;
   let prefetchTimer = 0;
   let idleTimer = 0;
   const IDLE_RELEASE_MS = 20000;
+  const imageLoadGeneration = new WeakMap();
 
+  installCaptchaCorsHook();
   document.addEventListener("dblclick", onDoubleClick, true);
-  document.addEventListener(
-    "load",
-    (event) => {
-      if (event.target instanceof HTMLImageElement) {
-        if (event.target.dataset.rtaOcrIgnoreLoad === "1") {
-          delete event.target.dataset.rtaOcrIgnoreLoad;
-          return;
-        }
-        if (onLoginSurface()) {
-          schedulePrefetch();
-        }
-      }
-    },
-    true,
-  );
+  document.addEventListener("load", onImageLoad, true);
   document.addEventListener(
     "input",
     (event) => {
@@ -78,6 +65,126 @@
     }
   }
 
+  function installCaptchaCorsHook() {
+    const observe = (target) => {
+      if (!target) {
+        return;
+      }
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.type === "attributes" && mutation.target instanceof HTMLImageElement) {
+            if (ensureCaptchaCors(mutation.target)) {
+              continue;
+            }
+            if (onLoginSurface()) {
+              schedulePrefetch();
+            }
+            continue;
+          }
+          for (const node of mutation.addedNodes) {
+            scanForCaptchaImages(node);
+          }
+        }
+      });
+      observer.observe(target, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["src"],
+      });
+      scanForCaptchaImages(target);
+    };
+
+    if (document.documentElement) {
+      observe(document.documentElement);
+      return;
+    }
+    const boot = new MutationObserver(() => {
+      if (!document.documentElement) {
+        return;
+      }
+      boot.disconnect();
+      observe(document.documentElement);
+    });
+    boot.observe(document, { childList: true });
+  }
+
+  function scanForCaptchaImages(root) {
+    if (root instanceof HTMLImageElement) {
+      ensureCaptchaCors(root);
+      return;
+    }
+    if (!root || typeof root.querySelectorAll !== "function") {
+      return;
+    }
+    for (const image of root.querySelectorAll("img")) {
+      ensureCaptchaCors(image);
+    }
+  }
+
+  function isCaptchaImageCandidate(image) {
+    if (!(image instanceof HTMLImageElement)) {
+      return false;
+    }
+    for (const selector of IMAGE_SELECTORS) {
+      try {
+        if (image.matches(selector)) {
+          return true;
+        }
+      } catch {
+        // Invalid selector in this document type.
+      }
+    }
+    const blob = [
+      image.currentSrc || "",
+      image.src || "",
+      image.getAttribute("src") || "",
+      image.id,
+      image.className,
+      image.alt || "",
+    ].join(" ");
+    return /getVerifyCodeImg|verifyCodeFlag|verifyCodeMsg|驗證碼|验证码/i.test(blob);
+  }
+
+  function ensureCaptchaCors(image) {
+    if (!isCaptchaImageCandidate(image) || image.crossOrigin === "use-credentials") {
+      return false;
+    }
+    const raw = image.getAttribute("src") || "";
+    if (raw) {
+      try {
+        const url = new URL(raw, location.href);
+        if (url.origin === location.origin) {
+          return false;
+        }
+      } catch {
+        return false;
+      }
+    } else if (image.id !== "verifyCodeMsg") {
+      return false;
+    }
+    const hadSrc = Boolean(raw);
+    image.crossOrigin = "use-credentials";
+    return hadSrc;
+  }
+
+  function onImageLoad(event) {
+    const image = event.target;
+    if (!(image instanceof HTMLImageElement)) {
+      return;
+    }
+    if (!isCaptchaImageCandidate(image)) {
+      return;
+    }
+    if (ensureCaptchaCors(image)) {
+      return;
+    }
+    imageLoadGeneration.set(image, (imageLoadGeneration.get(image) || 0) + 1);
+    if (onLoginSurface()) {
+      schedulePrefetch();
+    }
+  }
+
   function onLoginSurface() {
     const host = location.hostname.toLowerCase();
     const hash = location.hash || "";
@@ -90,33 +197,11 @@
   function onNavigation() {
     cache = { token: "", answer: "", error: null, job: null };
     if (onLoginSurface()) {
-      ensureObserver();
+      scanForCaptchaImages(document);
       schedulePrefetch();
       return;
     }
-    stopObserver();
     releaseEngine();
-  }
-
-  function ensureObserver() {
-    if (observer || !document.documentElement) {
-      return;
-    }
-    observer = new MutationObserver(schedulePrefetch);
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["src"],
-    });
-  }
-
-  function stopObserver() {
-    if (!observer) {
-      return;
-    }
-    observer.disconnect();
-    observer = null;
   }
 
   function ensureWorker() {
@@ -191,12 +276,16 @@
 
   function imageToken(image) {
     const src = image.currentSrc || image.src || "";
-    return `${challengeUrl(image)}|${src}|${image.naturalWidth}x${image.naturalHeight}`;
+    const generation = imageLoadGeneration.get(image) || 0;
+    return `${challengeUrl(image)}|${src}|${image.naturalWidth}x${image.naturalHeight}|g${generation}`;
   }
 
   function prefetchCurrentCaptcha() {
     const image = findCaptchaImage();
     if (!(image instanceof HTMLImageElement) || !image.complete || image.naturalWidth <= 0) {
+      return;
+    }
+    if (ensureCaptchaCors(image)) {
       return;
     }
     if (!challengeUrl(image)) {
@@ -206,7 +295,7 @@
     if (cache.token === token && (cache.answer || cache.job || cache.error)) {
       return;
     }
-    const job = recognize(image, token, false);
+    const job = recognize(image, token);
     cache = { token, answer: "", error: null, job };
     void job.then(
       (answer) => {
@@ -224,20 +313,8 @@
     );
   }
 
-  async function recognize(image, token, allowNetwork) {
-    let pixels;
-    try {
-      pixels = readCanvasPixels(image);
-    } catch (error) {
-      if (!allowNetwork) {
-        throw error;
-      }
-      const url = challengeUrl(image);
-      if (!url) {
-        throw new Error("cannot read captcha pixels");
-      }
-      pixels = await bytesToImageData(await fetchCaptchaBytes(url));
-    }
+  async function recognize(image, token) {
+    const pixels = await readVisiblePixels(image);
     if (imageToken(image) !== token) {
       throw new Error("captcha changed");
     }
@@ -317,6 +394,14 @@
       return;
     }
     hint(input, "正在辨識驗證碼…");
+    if (ensureCaptchaCors(image) || !image.complete || image.naturalWidth <= 0) {
+      try {
+        await waitForCaptchaLoad(image);
+      } catch {
+        hint(input, "辨識失敗。請點驗證碼圖片換圖後再雙擊輸入欄");
+        return;
+      }
+    }
     const tokenBefore = imageToken(image);
     prefetchCurrentCaptcha();
     try {
@@ -325,7 +410,7 @@
         answer = await cache.job;
       }
       if (!answer) {
-        answer = await recognize(image, tokenBefore, true);
+        answer = await recognize(image, tokenBefore);
         cache = { token: tokenBefore, answer, error: null, job: null };
       }
       const latest = findCaptchaImage();
@@ -342,16 +427,54 @@
     }
   }
 
+  function waitForCaptchaLoad(image) {
+    return new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("captcha load timed out"));
+      }, 4000);
+      function cleanup() {
+        window.clearTimeout(timeout);
+        image.removeEventListener("load", onLoad);
+        image.removeEventListener("error", onError);
+      }
+      function onLoad() {
+        cleanup();
+        resolve();
+      }
+      function onError() {
+        cleanup();
+        reject(new Error("captcha load failed"));
+      }
+      image.addEventListener("load", onLoad);
+      image.addEventListener("error", onError);
+    });
+  }
+
   async function readVisiblePixels(image) {
     try {
-      return readCanvasPixels(image);
-    } catch {
-      const url = challengeUrl(image);
-      if (!url) {
-        throw new Error("cannot read captcha pixels");
+      const bitmap = await createImageBitmap(image, {
+        premultiplyAlpha: "none",
+        colorSpaceConversion: "none",
+      });
+      try {
+        return bitmapToImageData(bitmap);
+      } finally {
+        bitmap.close();
       }
-      return bytesToImageData(await fetchCaptchaBytes(url));
+    } catch {
+      return readCanvasPixels(image);
     }
+  }
+
+  function bitmapToImageData(bitmap) {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      throw new Error("canvas 2d context is unavailable");
+    }
+    context.drawImage(bitmap, 0, 0);
+    return context.getImageData(0, 0, bitmap.width, bitmap.height);
   }
 
   function readCanvasPixels(image) {
@@ -382,8 +505,7 @@
       if (!(image instanceof HTMLImageElement) || !isVisible(image)) {
         continue;
       }
-      const blob = `${image.currentSrc || ""} ${image.src || ""} ${image.id} ${image.className} ${image.alt || ""} ${image.dataset.rtaOcrOriginal || ""}`;
-      if (/getVerifyCodeImg|verifyCodeFlag|verifyCodeMsg|驗證碼|验证码/i.test(blob)) {
+      if (isCaptchaImageCandidate(image)) {
         return image;
       }
     }
@@ -436,65 +558,6 @@
     return rect.width > 0 && rect.height > 0;
   }
 
-  function gmRequest() {
-    if (typeof GM_xmlhttpRequest === "function") {
-      return GM_xmlhttpRequest;
-    }
-    if (typeof GM !== "undefined" && typeof GM.xmlHttpRequest === "function") {
-      return GM.xmlHttpRequest;
-    }
-    return null;
-  }
-
-  function fetchCaptchaBytes(url) {
-    const request = gmRequest();
-    if (!request) {
-      return Promise.reject(new Error("GM_xmlhttpRequest is unavailable"));
-    }
-    return new Promise((resolve, reject) => {
-      request({
-        method: "GET",
-        url,
-        responseType: "arraybuffer",
-        anonymous: false,
-        timeout: 12000,
-        headers: {
-          Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        },
-        onload(response) {
-          if (response.status < 200 || response.status >= 300) {
-            reject(new Error(`captcha HTTP ${response.status}`));
-            return;
-          }
-          const buffer = response.response;
-          if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0) {
-            reject(new Error("empty captcha image"));
-            return;
-          }
-          const bytes = new Uint8Array(buffer);
-          resolve(bytes);
-        },
-        onerror: () => reject(new Error("captcha request failed")),
-        ontimeout: () => reject(new Error("captcha request timed out")),
-      });
-    });
-  }
-
-  async function bytesToImageData(bytes) {
-    const bitmap = await createImageBitmap(new Blob([bytes]));
-    try {
-      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-      const context = canvas.getContext("2d", { willReadFrequently: true });
-      if (!context) {
-        throw new Error("canvas 2d context is unavailable");
-      }
-      context.drawImage(bitmap, 0, 0);
-      return context.getImageData(0, 0, bitmap.width, bitmap.height);
-    } finally {
-      bitmap.close();
-    }
-  }
-
   function hint(input, text) {
     if (input) {
       input.title = text;
@@ -529,11 +592,7 @@
     if (!image) {
       return "";
     }
-    return (
-      validatedCaptchaUrl(image.currentSrc || image.src) ||
-      image.dataset.rtaOcrOriginal ||
-      ""
-    );
+    return validatedCaptchaUrl(image.currentSrc || image.src) || "";
   }
 
   function validatedCaptchaUrl(value) {

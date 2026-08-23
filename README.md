@@ -13,8 +13,8 @@ It prefetches the captcha in the background and fills only when you **double-cli
 1. Install [Tampermonkey for Edge](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd) or [for Chrome](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo).
 2. Open the raw userscript; Tampermonkey prompts to install:  
    https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
-3. Click **Install**.
-4. Open the RTA login page. Double-click the captcha input to solve it. The script does not run automatically. You still submit the login yourself.
+3. Click **Install**. If an older copy is already installed, delete it in the Tampermonkey dashboard first and install this **1.0.17** file; old copies do not update reliably.
+4. Open the RTA login page. Click the captcha image to refresh it with the site's own handler. Double-click the captcha input to fill the digits you see. The script does not run automatically. You still submit the login yourself.
 
 Violentmonkey and ScriptCat can install the same `.user.js`. Your userscript manager may ask to allow RTA domains on the first fetch; allow them.
 

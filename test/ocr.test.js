@@ -84,6 +84,31 @@ test("embedded OCR has every hexadecimal template in both models", () => {
   }
 });
 
+test("acceptMatch allows a farther hit only when the runner-up is clearly worse", () => {
+  const solver = new EmbeddedOCRSolver();
+  assert.equal(solver.acceptMatch(0.19, 0.02), true);
+  assert.equal(solver.acceptMatch(0.21, 0.08), true);
+  assert.equal(solver.acceptMatch(0.21, 0.03), false);
+  assert.equal(solver.acceptMatch(0.26, 0.2), false);
+  assert.equal(solver.acceptMatch(0.1, -1), false);
+});
+
+test("resolveModelDisagreement keeps a clearly closer model", () => {
+  const solver = new EmbeddedOCRSolver();
+  const stretched = solver.resolveModelDisagreement(
+    { character: "8", distance: 0.05, margin: 0.02 },
+    { character: "0", distance: 0.2, margin: 0.02 },
+  );
+  assert.equal(stretched.character, "8");
+  assert.ok(stretched.margin > 0.14);
+
+  const rejected = solver.resolveModelDisagreement(
+    { character: "8", distance: 0.11, margin: 0.02 },
+    { character: "0", distance: 0.13, margin: 0.02 },
+  );
+  assert.equal(rejected.margin, -1);
+});
+
 test("embedded OCR rejects uncertain output instead of guessing", () => {
   const solver = new EmbeddedOCRSolver({
     maximumDistance: 2,

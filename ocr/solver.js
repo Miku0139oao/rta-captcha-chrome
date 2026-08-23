@@ -2,6 +2,8 @@ import {
   FITTED_GLYPH_TEMPLATES,
   LEARNED_GLYPH_TEMPLATES,
   SUPPLEMENTAL_GLYPH_TEMPLATES,
+  TRAINED_FITTED_GLYPH_TEMPLATES,
+  TRAINED_GLYPH_TEMPLATES,
 } from "./templates.generated.js";
 
 export const DEFAULT_OCR_ALPHABET = "0123456789abcdef";
@@ -79,10 +81,12 @@ function getPreparedTemplateCache() {
     stretched[character] = prepareGlyphTemplates([
       ...decodeGlyphTemplates(LEARNED_GLYPH_TEMPLATES[character]),
       ...decodeGlyphTemplates(SUPPLEMENTAL_GLYPH_TEMPLATES[character]),
+      ...decodeGlyphTemplates(templateList(TRAINED_GLYPH_TEMPLATES, character)),
     ]);
-    fitted[character] = prepareGlyphTemplates(
-      decodeGlyphTemplates(FITTED_GLYPH_TEMPLATES[character]),
-    );
+    fitted[character] = prepareGlyphTemplates([
+      ...decodeGlyphTemplates(FITTED_GLYPH_TEMPLATES[character]),
+      ...decodeGlyphTemplates(templateList(TRAINED_FITTED_GLYPH_TEMPLATES, character)),
+    ]);
   }
   preparedTemplateCache = { stretched, fitted };
   return preparedTemplateCache;
@@ -129,10 +133,7 @@ export class EmbeddedOCRSolver {
     let answer = "";
     for (let index = 0; index < this.length; index += 1) {
       const match = this.classifyCaptchaCharacter(source, index);
-      if (
-        match.distance > this.maximumDistance ||
-        match.margin < this.minimumScoreMargin
-      ) {
+      if (!this.acceptMatch(match.distance, match.margin)) {
         throw new OCRUncertainError(index, match.distance, match.margin);
       }
       answer += match.character;
@@ -171,13 +172,24 @@ export class EmbeddedOCRSolver {
 
     const distance = Math.max(...winner.bestDistance);
     const margin = Math.min(...winner.bestMargin);
-    if (
-      distance > this.maximumDistance ||
-      margin < this.minimumScoreMargin
-    ) {
+    if (!this.acceptMatch(distance, margin)) {
       return baseline;
     }
     return { character: winner.character, distance, margin };
+  }
+
+  acceptMatch(distance, margin) {
+    if (margin < 0 || !Number.isFinite(distance)) {
+      return false;
+    }
+    if (distance <= this.maximumDistance && margin >= this.minimumScoreMargin) {
+      return true;
+    }
+    // Farther template is safe only when the runner-up is clearly worse.
+    return (
+      distance <= this.maximumDistance + 0.05 &&
+      margin >= this.minimumScoreMargin + 0.05
+    );
   }
 
   topologySupports(source, index, character) {
@@ -244,17 +256,36 @@ export class EmbeddedOCRSolver {
     const stretched = selectBestGlyphMatch(stretchedMatches);
     const fitted = selectBestGlyphMatch(fittedMatches);
     if (stretched.character !== fitted.character) {
-      return {
-        character: stretched.character,
-        distance: Math.max(stretched.distance, fitted.distance),
-        margin: -1,
-      };
+      return this.resolveModelDisagreement(stretched, fitted);
     }
     return {
       character: stretched.character,
       distance: Math.max(stretched.distance, fitted.distance),
       margin: Math.min(stretched.margin, fitted.margin),
     };
+  }
+
+  resolveModelDisagreement(stretched, fitted) {
+    const reject = {
+      character: stretched.character,
+      distance: Math.max(stretched.distance, fitted.distance),
+      margin: -1,
+    };
+    if (stretched.distance + 0.08 <= fitted.distance && stretched.distance <= 0.12) {
+      return {
+        character: stretched.character,
+        distance: stretched.distance,
+        margin: fitted.distance - stretched.distance,
+      };
+    }
+    if (fitted.distance + 0.08 <= stretched.distance && fitted.distance <= 0.12) {
+      return {
+        character: fitted.character,
+        distance: fitted.distance,
+        margin: stretched.distance - fitted.distance,
+      };
+    }
+    return reject;
   }
 
   classifyGlyphEnsemble(components) {
@@ -1213,6 +1244,10 @@ function countGlyphHoles(glyph) {
     }
   }
   return holes;
+}
+
+function templateList(map, character) {
+  return Array.isArray(map?.[character]) ? map[character] : [];
 }
 
 export const __testing = Object.freeze({

@@ -15,11 +15,13 @@ const sourceRoot = path.resolve(process.argv[2]);
 const sourceFiles = {
   learned: path.join(sourceRoot, "rtasales", "embedded_ocr_learned.go"),
   consensus: path.join(sourceRoot, "rtasales", "embedded_ocr_consensus_learned.go"),
+  trained: path.join(sourceRoot, "rtasales", "embedded_ocr_trained.go"),
 };
 
-const [learnedSource, consensusSource] = await Promise.all([
+const [learnedSource, consensusSource, trainedSource] = await Promise.all([
   readFile(sourceFiles.learned, "utf8"),
   readFile(sourceFiles.consensus, "utf8"),
+  readFile(sourceFiles.trained, "utf8").catch(() => ""),
 ]);
 
 function extractGoTemplateMap(source, variableName) {
@@ -52,6 +54,10 @@ function extractGoTemplateMap(source, variableName) {
   return result;
 }
 
+function emptyTemplateMap() {
+  return Object.fromEntries([..."0123456789abcdef"].map((character) => [character, []]));
+}
+
 const maps = {
   LEARNED_GLYPH_TEMPLATES: extractGoTemplateMap(
     learnedSource,
@@ -65,6 +71,12 @@ const maps = {
     consensusSource,
     "fittedGlyphTemplates",
   ),
+  TRAINED_GLYPH_TEMPLATES: trainedSource
+    ? extractGoTemplateMap(trainedSource, "trainedGlyphTemplates")
+    : emptyTemplateMap(),
+  TRAINED_FITTED_GLYPH_TEMPLATES: trainedSource
+    ? extractGoTemplateMap(trainedSource, "trainedFittedGlyphTemplates")
+    : emptyTemplateMap(),
 };
 
 function sha256(value) {
@@ -76,6 +88,9 @@ const output = [
   "// Ported from rta-sales-client-go's locally verified embedded OCR templates.",
   `// embedded_ocr_learned.go sha256: ${sha256(learnedSource)}`,
   `// embedded_ocr_consensus_learned.go sha256: ${sha256(consensusSource)}`,
+  trainedSource
+    ? `// embedded_ocr_trained.go sha256: ${sha256(trainedSource)}`
+    : "// embedded_ocr_trained.go: missing",
   "",
   ...Object.entries(maps).flatMap(([name, value]) => [
     `export const ${name} = Object.freeze(${JSON.stringify(value)});`,

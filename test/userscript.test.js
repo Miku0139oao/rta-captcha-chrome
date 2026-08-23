@@ -21,7 +21,13 @@ test("userscript has a Tampermonkey header and local OCR solver", () => {
   assert.match(userscript, /prefetchCurrentCaptcha/);
   assert.match(userscript, /releaseEngine/);
   assert.match(userscript, /onLoginSurface/);
+  assert.match(userscript, /@run-at\s+document-start/);
+  assert.match(userscript, /use-credentials/);
+  assert.match(userscript, /ensureCaptchaCors/);
   assert.doesNotMatch(userscript, /showPreview/);
+  assert.doesNotMatch(userscript, /fetchCaptchaBytes/);
+  assert.doesNotMatch(userscript, /showFetchedImage/);
+  assert.doesNotMatch(userscript, /image\.click\(/);
   assert.match(userscript, /img#verifyCodeMsg/);
   assert.match(userscript, /input-verify_code/);
   assert.doesNotMatch(userscript, /^import /m);
