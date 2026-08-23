@@ -10,7 +10,6 @@
 // @connect      sso.rta-os.com
 // @connect      mansso.rta-os.com
 // @connect      partner.rta-os.com
-// @connect      *
 // @grant        GM_xmlhttpRequest
 // @grant        GM.xmlHttpRequest
 // @run-at       document-idle

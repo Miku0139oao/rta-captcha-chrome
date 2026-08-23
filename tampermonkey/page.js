@@ -58,7 +58,28 @@
   );
   window.addEventListener("hashchange", onNavigation);
   window.addEventListener("popstate", onNavigation);
+  patchHistoryApi();
   onNavigation();
+
+  function patchHistoryApi() {
+    for (const method of ["pushState", "replaceState"]) {
+      const original = history[method];
+      if (typeof original !== "function" || original.rtaPatched === true) {
+        continue;
+      }
+      const patched = function (...args) {
+        const result = original.apply(this, args);
+        onNavigation();
+        return result;
+      };
+      try {
+        patched.rtaPatched = true;
+      } catch {
+        // Non-extensible function; still safe to assign.
+      }
+      history[method] = patched;
+    }
+  }
 
   function onLoginSurface() {
     const host = location.hostname.toLowerCase();
