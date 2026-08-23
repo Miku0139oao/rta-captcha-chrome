@@ -70,7 +70,6 @@
       ensurePresenceObserver();
       attachIfPresent();
       schedulePrefetch();
-      void warmup();
       return;
     }
     teardownWatchers();
@@ -109,6 +108,9 @@
       return;
     }
     markCaptchaInput(input);
+    if (!warmed) {
+      void warmup();
+    }
     if (boundImage === image) {
       return;
     }
@@ -241,14 +243,26 @@
     cache = { token, answer: "", error: null, job };
     void job.then(
       (answer) => {
-        if (cache.token === token) {
-          cache = { token: imageToken(image), answer, error: null, job: null };
+        if (cache.token !== token) {
+          return;
+        }
+        // Only keep the answer if the on-screen captcha is still the one
+        // that was recognized; otherwise drop it instead of mis-keying.
+        if (imageToken(image) === token) {
+          cache = { token, answer, error: null, job: null };
           hint(getCaptchaInput(), HINT_READY);
+        } else {
+          cache = emptyCache();
         }
       },
       (error) => {
-        if (cache.token === token) {
-          cache = { token: imageToken(image), answer: "", error, job: null };
+        if (cache.token !== token) {
+          return;
+        }
+        if (imageToken(image) === token) {
+          cache = { token, answer: "", error, job: null };
+        } else {
+          cache = emptyCache();
         }
       },
     );
@@ -313,9 +327,14 @@
         answer = await recognize(image, token);
         cache = { token: imageToken(image), answer, error: null, job: null };
       }
-      if (ANSWER_PATTERN.test(answer)) {
+      if (
+        ANSWER_PATTERN.test(answer) &&
+        imageToken(findCaptchaImage() || image) === token
+      ) {
         fillCaptchaInput(answer);
         hint(input, HINT_DONE);
+      } else {
+        hint(input, HINT_FAIL);
       }
     } catch {
       hint(input, HINT_FAIL);
@@ -351,6 +370,7 @@
         window.clearTimeout(timeout);
         image.removeEventListener("load", onLoad);
         image.removeEventListener("error", onError);
+        URL.revokeObjectURL(blobUrl);
       }
       function onLoad() {
         cleanup();

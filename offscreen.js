@@ -1,14 +1,19 @@
 const PORT_NAME = "rta-ocr-offscreen-v1";
 const REQUEST_ID_PATTERN = /^[a-f0-9-]{16,64}$/;
 const MAX_ENCODED_LENGTH = 6 * 1024 * 1024;
+const IDLE_CLOSE_MS = 25000;
 
 let backgroundPort = null;
 let ocrWorker = null;
+let reconnectTimer = null;
+let idleCloseTimer = null;
+let shuttingDown = false;
 const activeJobs = new Set();
 
 connectToBackground();
 
 function connectToBackground() {
+  clearTimeout(reconnectTimer);
   const port = chrome.runtime.connect({ name: PORT_NAME });
   backgroundPort = port;
   port.onMessage.addListener((message) => {
@@ -20,7 +25,22 @@ function connectToBackground() {
     }
     activeJobs.clear();
     resetWorker();
+    if (!shuttingDown) {
+      reconnectTimer = setTimeout(connectToBackground, 250);
+    }
   });
+}
+
+function scheduleIdleClose() {
+  clearTimeout(idleCloseTimer);
+  idleCloseTimer = setTimeout(() => {
+    if (activeJobs.size > 0 || !backgroundPort) {
+      return;
+    }
+    shuttingDown = true;
+    // Wakes the service worker so it can close this document.
+    chrome.runtime.sendMessage({ type: "RTA_CAPTCHA_OFFSCREEN_IDLE" }).catch(() => undefined);
+  }, IDLE_CLOSE_MS);
 }
 
 function handleBackgroundMessage(message, sourcePort) {
@@ -100,6 +120,7 @@ function ensureWorker() {
     if (backgroundPort) {
       backgroundPort.postMessage(sanitizeWorkerResponse(message));
     }
+    scheduleIdleClose();
   });
   worker.addEventListener("error", () => {
     for (const id of activeJobs) {
@@ -107,6 +128,7 @@ function ensureWorker() {
     }
     activeJobs.clear();
     resetWorker();
+    scheduleIdleClose();
   });
   ocrWorker = worker;
   return worker;

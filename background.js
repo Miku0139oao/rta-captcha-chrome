@@ -11,6 +11,7 @@ const CONTENT_MESSAGE_TYPE = "RTA_CAPTCHA_SOLVE";
 const WARMUP_MESSAGE_TYPE = "RTA_CAPTCHA_WARMUP";
 const RELEASE_MESSAGE_TYPE = "RTA_CAPTCHA_RELEASE";
 const FILL_MESSAGE_TYPE = "RTA_CAPTCHA_FILL";
+const OFFSCREEN_IDLE_MESSAGE_TYPE = "RTA_CAPTCHA_OFFSCREEN_IDLE";
 const OFFSCREEN_PORT_NAME = "rta-ocr-offscreen-v1";
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -49,6 +50,14 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === OFFSCREEN_IDLE_MESSAGE_TYPE) {
+    if (!isOffscreenSender(sender)) {
+      sendResponse({ ok: false, reason: "rejected" });
+      return false;
+    }
+    void releaseOffscreen().then(() => sendResponse({ ok: true }));
+    return true;
+  }
   if (message?.type === RELEASE_MESSAGE_TYPE) {
     if (!isTrustedContentSender(sender)) {
       sendResponse({ ok: false, reason: "rejected" });

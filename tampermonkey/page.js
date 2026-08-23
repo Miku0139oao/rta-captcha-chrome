@@ -352,6 +352,7 @@
         window.clearTimeout(timeout);
         image.removeEventListener("load", onLoad);
         image.removeEventListener("error", onError);
+        URL.revokeObjectURL(blobUrl);
       }
       function onLoad() {
         cleanup();
