@@ -208,7 +208,7 @@
     if (cache.token === token && (cache.answer || cache.job || cache.error)) {
       return;
     }
-    const job = recognize(image, token);
+    const job = recognize(image, token, false);
     cache = { token, answer: "", error: null, job };
     void job.then(
       (answer) => {
@@ -226,12 +226,15 @@
     );
   }
 
-  async function recognize(image, token) {
+  async function recognize(image, token, allowNetwork) {
     let pixels;
     try {
       pixels = readCanvasPixels(image);
       hidePreview();
-    } catch {
+    } catch (error) {
+      if (!allowNetwork) {
+        throw error;
+      }
       const url = challengeUrl(image);
       if (!url) {
         throw new Error("cannot read captcha pixels");
@@ -387,7 +390,7 @@
         answer = await cache.job;
       }
       if (!answer) {
-        answer = await recognize(image, tokenBefore);
+        answer = await recognize(image, tokenBefore, true);
         cache = { token: tokenBefore, answer, error: null, job: null };
       }
       const latest = findCaptchaImage();
