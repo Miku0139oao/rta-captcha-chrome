@@ -1,10 +1,14 @@
 // Tampermonkey page layer. Bundled by scripts/build-userscript.mjs, which inlines
-// lib/page-core.js and the OCR core above this file.
+// lib/page-core.js, lib/tracker-hosts.js and the OCR core above this file.
 //
 // Only the platform transport lives here: turning the visible image into pixels,
 // keeping OCR in a worker, and releasing it when idle. Captcha discovery, the
 // one minute lifetime, refresh and fill behaviour all come from page-core so this
 // build cannot drift away from the extension.
+
+// Runs at document-start, before any of the site's own scripts, so the analytics
+// SDK is captured before it can send an event.
+installTrackerBlocker();
 
 const page = createCaptchaPage({
   recognize: recognizeCaptcha,

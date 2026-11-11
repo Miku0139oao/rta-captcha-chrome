@@ -11,10 +11,11 @@ const manifest = JSON.parse(
 
 test("manifest is MV3 with the minimum permission surface", () => {
   assert.equal(manifest.manifest_version, 3);
-  assert.deepEqual(manifest.permissions, ["offscreen"]);
+  assert.deepEqual(manifest.permissions, ["offscreen", "declarativeNetRequest"]);
   assert.deepEqual(manifest.host_permissions, [
     "https://sso.rta-os.com/*",
     "https://mansso.rta-os.com/*",
+    "https://logman.rta-os.com/*",
   ]);
   assert.equal(manifest.optional_permissions, undefined);
   assert.equal(manifest.optional_host_permissions, undefined);
@@ -36,6 +37,24 @@ test("content script is limited to RTA login hosts, including SSO iframes", () =
   assert.equal(manifest.content_scripts[0].match_about_blank, false);
   assert.ok(!JSON.stringify(manifest).includes("<all_urls>"));
   assert.ok(!JSON.stringify(manifest).includes("http://"));
+});
+
+test("the network block rule is scoped to the telemetry host only", async () => {
+  const ruleSet = manifest.declarative_net_request.rule_resources;
+  assert.deepEqual(ruleSet, [
+    { id: "trackers", enabled: true, path: "rules/trackers.json" },
+  ]);
+  const rules = JSON.parse(
+    await readFile(path.join(projectRoot, "rules", "trackers.json"), "utf8"),
+  );
+  assert.ok(rules.length > 0);
+  for (const rule of rules) {
+    assert.equal(rule.action.type, "block");
+    assert.equal(rule.condition.urlFilter, "||logman.rta-os.com^");
+    // Blocking navigation would break the login flow itself.
+    assert.ok(!rule.condition.resourceTypes.includes("main_frame"));
+    assert.ok(rule.condition.resourceTypes.includes("xmlhttprequest"));
+  }
 });
 
 test("extension CSP forbids inline, evaluated, remote, and object code", () => {
@@ -128,7 +147,6 @@ test("credential and broad browsing APIs are not requested or called", async () 
   const forbiddenPermissions = [
     "activeTab",
     "cookies",
-    "declarativeNetRequest",
     "history",
     "scripting",
     "storage",
@@ -139,12 +157,21 @@ test("credential and broad browsing APIs are not requested or called", async () 
   for (const permission of forbiddenPermissions) {
     assert.ok(!manifest.permissions.includes(permission), permission);
   }
+  // declarativeNetRequest is allowed, but only for the static blocklist below.
+  // Dynamic rule updates would mean the extension could reshape traffic at run
+  // time; the static rule file is reviewable and covered by its own test.
+  assert.ok(!manifest.permissions.includes("declarativeNetRequestWithHostAccess"));
+  assert.ok(!manifest.permissions.includes("declarativeNetRequestFeedback"));
   const extensionSources = await Promise.all(
     ["background.js", "offscreen.js", "lib/page-core.js"].map((file) =>
       readFile(path.join(projectRoot, file), "utf8"),
     ),
   );
   assert.doesNotMatch(extensionSources.join("\n"), /chrome\.(?:cookies|history)\b/);
+  assert.doesNotMatch(
+    extensionSources.join("\n"),
+    /declarativeNetRequest\.update(?:Dynamic|Session)Rules/,
+  );
 });
 
 async function collectFiles(directory) {

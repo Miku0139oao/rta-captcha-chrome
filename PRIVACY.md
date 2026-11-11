@@ -32,9 +32,13 @@ The extension does **not**:
 
 OCR runs inside the extension's own offscreen document and dedicated worker.
 
+## Telemetry blocking
+
+RTA's own portal loads an analytics SDK that posts behavioural events to `logman.rta-os.com` — page views, a user id, screen resolution, user agent, page URL, and session counters. The extension blocks that host with a static declarativeNetRequest rule. The request is refused inside the browser; nothing is collected by the extension, forwarded elsewhere, or reported anywhere.
+
 ## Network requests
 
-The only network request the extension can make is to RTA's own server for the captcha image displayed by the RTA login page (or, when the pixels are unreadable, for the same challenge URL). The browser may attach cookies that RTA already set for that host; the extension never reads cookie values.
+The only network request the extension makes itself is to RTA's own server for the captcha image displayed by the RTA login page (or, when the pixels are unreadable, for the same challenge URL). It never requests the blocked analytics host. The browser may attach cookies that RTA already set for that host; the extension never reads cookie values.
 
 No data is transmitted to `github.com`, Google, or the developer as part of solving the captcha.
 

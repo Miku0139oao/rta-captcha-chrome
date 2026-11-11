@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         RTA Captcha OCR
 // @namespace    https://github.com/Miku0139oao/rta-captcha-chrome
-// @version      1.1.0
-// @description  讀畫面上的驗證碼圖；雙擊輸入欄填入。驗證碼逾時會自動換一張。
+// @version      1.2.0
+// @description  讀畫面上的驗證碼圖；雙擊輸入欄或圖片填入。逾時自動換一張，並阻擋分析遙測。
 // @author       Miku0139oao
 // @license      MIT
 // @match        https://*.rta-os.com/*

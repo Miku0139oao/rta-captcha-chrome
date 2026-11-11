@@ -12,6 +12,10 @@ RTA 的驗證碼大約一分鐘後失效，因此：
 - 雙擊時若畫面上那張已經過期，會先換一張再辨識；這跟使用者自己點驗證碼圖換圖是同一件事。
 - 填入時**一律覆蓋**欄位內容。留著先前打一半或舊的驗證碼只會讓登入失敗，覆蓋掉才符合實際狀況。
 
+三個入口都會觸發填入：雙擊驗證碼輸入欄、雙擊驗證碼圖片、點工具列圖示。辨識失敗時不動欄位，只在提示裡說明。
+
+擴充功能同時阻擋 RTA 的分析遙測主機 `logman.rta-os.com`。該主機每次頁面進入都會送出事件，內含使用者 ID、螢幕解析度、User-Agent、頁面 URL 與工作階段計數。阻擋不影響後台功能。
+
 ## 安裝
 
 ### 方法零：Tampermonkey（Edge / Chrome 都適用，最簡單）
@@ -76,6 +80,8 @@ Worker 只回傳符合固定格式的答案。兩種正規化模型不一致、�
 | `offscreen` | 建立不顯示 UI 的 extension document，以承載本機 OCR Worker。 |
 | RTA 登入頁 host | 只在官方登入頁載入 content script，並驗證訊息來源。 |
 | RTA 驗證碼圖片 host | 只取得該頁實際顯示的驗證碼圖片。 |
+| `declarativeNetRequest` | 只用靜態規則檔封鎖分析遙測主機，執行期不會新增或修改規則。 |
+| RTA 分析主機 host | 只為了讓靜態封鎖規則能命中該主機；程式不對它發出任何請求。 |
 
 沒有要求 `activeTab`、`cookies`、`history`、`scripting`、`storage`、`tabs`、`webRequest` 或 `<all_urls>`，也沒有 `web_accessible_resources`。
 
@@ -89,6 +95,7 @@ Worker 只回傳符合固定格式的答案。兩種正規化模型不一致、�
 - 強制覆蓋舊輸入：欄位裡舊的或打一半的驗證碼一定已經失效，因此填入時直接覆蓋。
 - 不自動登入：不點擊登入按鈕、不送出表單。使用者仍需自行檢查並送出。
 - 不記錄敏感內容：production code 不輸出圖片、答案、URL 或表單內容到 console。
+- 阻擋遙測：以靜態 `declarativeNetRequest` 規則封鎖 `logman.rta-os.com`；Tampermonkey 版改在 document-start 攔截 `fetch`／`XMLHttpRequest`／`sendBeacon`。被攔下的請求不會離開瀏覽器，也不會轉送到其他地方。
 - 有界資源：圖片大小與像素數有上限、網路與 OCR 都有 timeout；離開登入頁或閒置時釋放 OCR 資源。
 
 ## 測試與驗證

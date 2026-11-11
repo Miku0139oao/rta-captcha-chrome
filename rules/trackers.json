@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||logman.rta-os.com^",
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "image",
+        "script",
+        "sub_frame",
+        "other"
+      ]
+    }
+  }
+]

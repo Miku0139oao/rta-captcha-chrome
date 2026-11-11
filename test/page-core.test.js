@@ -39,3 +39,41 @@ test("every hint message is present and user-facing", () => {
     assert.ok(!combined.includes(leak), leak);
   }
 });
+
+import { isTrackerHost, TRACKER_HOSTS } from "../lib/tracker-hosts.js";
+
+test("the blocker targets exactly the telemetry host", () => {
+  assert.deepEqual([...TRACKER_HOSTS], ["logman.rta-os.com"]);
+  assert.equal(isTrackerHost("logman.rta-os.com"), true);
+  assert.equal(isTrackerHost("LOGMAN.rta-os.com"), true);
+  assert.equal(isTrackerHost("logman.rta-os.com."), true);
+  // Nothing functional may be caught by the rule.
+  for (const host of [
+    "partner.rta-os.com",
+    "sso.rta-os.com",
+    "mansso.rta-os.com",
+    "notlogman.rta-os.com",
+    "logman.rta-os.com.evil.test",
+    "",
+    "rta-os.com",
+  ]) {
+    assert.equal(isTrackerHost(host), false, host);
+  }
+});
+
+test("the declarativeNetRequest rule matches the shared host list", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const rules = JSON.parse(
+    await readFile(new URL("../rules/trackers.json", import.meta.url), "utf8"),
+  );
+  assert.equal(rules.length, TRACKER_HOSTS.length);
+  const blocked = rules
+    .filter((rule) => rule.action.type === "block")
+    .map((rule) => rule.condition.urlFilter.replace(/^\|\|/, "").replace(/\^$/, ""));
+  assert.deepEqual(blocked.sort(), [...TRACKER_HOSTS].sort());
+  for (const rule of rules) {
+    assert.ok(!("excludedResourceTypes" in rule.condition));
+    // A block rule without resourceTypes would also break navigation.
+    assert.ok(Array.isArray(rule.condition.resourceTypes), rule.id);
+  }
+});

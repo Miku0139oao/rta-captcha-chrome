@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "RTA Captcha OCR",
-  "version": "1.1.0",
-  "description": "本機辨識 RTA 驗證碼。背景預先算好，雙擊輸入欄或工具列圖示填入；驗證碼逾時會自動換一張。不讀帳密、不送出登入。",
+  "version": "1.2.0",
+  "description": "本機辨識 RTA 驗證碼。背景預先算好，雙擊輸入欄或工具列圖示填入；驗證碼逾時會自動換一張。阻擋 RTA 分析遙測。不讀帳密、不送出登入。",
   "homepage_url": "https://github.com/Miku0139oao/rta-captcha-chrome",
   "minimum_chrome_version": "109",
   "icons": {
@@ -21,12 +21,23 @@
     }
   },
   "permissions": [
-    "offscreen"
+    "offscreen",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "https://sso.rta-os.com/*",
-    "https://mansso.rta-os.com/*"
+    "https://mansso.rta-os.com/*",
+    "https://logman.rta-os.com/*"
   ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "trackers",
+        "enabled": true,
+        "path": "rules/trackers.json"
+      }
+    ]
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"

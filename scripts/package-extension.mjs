@@ -20,6 +20,8 @@ const FILES = [
   "lib/glyph.js",
   "lib/page-core.js",
   "lib/protocol.js",
+  "lib/tracker-hosts.js",
+  "rules/trackers.json",
   "ocr/solver.js",
   "ocr/worker.js",
   "ocr/templates.generated.js",

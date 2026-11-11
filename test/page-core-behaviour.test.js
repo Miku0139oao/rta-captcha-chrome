@@ -23,14 +23,15 @@ function createFakeDom() {
       return this.connected;
     }
     matches(selector) {
-      return selector === 'img#verifyCodeMsg' && this.id === 'verifyCodeMsg';
+      return selector === "img#verifyCodeMsg" && this.id === "verifyCodeMsg";
+    }
+    closest(selector) {
+      return selector === "img" && this.tagName === "IMG" ? this : null;
     }
     contains() {
       return false;
     }
-    closest() {
-      return null;
-    }
+    tagName = "DIV";
     addEventListener(type, handler) {
       const key = 'el:' + type;
       const list = listeners.get(key) ?? [];
@@ -62,6 +63,7 @@ function createFakeDom() {
       this.naturalWidth = 120;
       this.naturalHeight = 30;
       this.id = "verifyCodeMsg";
+      this.tagName = "IMG";
       this.clicks = 0;
     }
     click() {
@@ -86,6 +88,7 @@ function createFakeDom() {
       this.name = "input-verify_code";
       this.id = "verifyCode";
       this._value = "stale-typed-value";
+      this.initialValue = this._value;
     }
     get value() {
       return this._value;
@@ -180,6 +183,12 @@ function createFakeDom() {
     }
   }
 
+  function emitDoubleClick(event) {
+    for (const handler of listeners.get("dblclick") ?? []) {
+      handler(event);
+    }
+  }
+
   function emitWindow(type, target) {
     for (const handler of listeners.get('win:' + type) ?? []) {
       handler({ type, target });
@@ -190,6 +199,7 @@ function createFakeDom() {
     image,
     input,
     emit,
+    emitDoubleClick,
     emitWindow,
     advance(ms) {
       clock += ms;
@@ -342,4 +352,83 @@ test("a failed captcha load drops the cached answer", async () => {
 
   await page.fillNow();
   assert.equal(calls, 2, "OCR must run again instead of reusing the dropped answer");
+});
+
+test("the OCR answer replaces whatever the field holds, including nothing", async () => {
+  // The captcha server keeps its own answer for the challenge. Whatever the
+  // user has in the field -- a wrong code, a partial code, or nothing at all --
+  // is discarded, because only the answer that matches the challenge can pass.
+  const cases = [
+    ["", "an empty field"],
+    ["   ", "whitespace only"],
+    ["fffff", "a wrong but well-formed code"],
+    ["abc", "a partial code"],
+    ["ZZZZZ", "garbage"],
+    ["stale-typed-value", "leftover text"],
+  ];
+
+  for (const [initial, description] of cases) {
+    const dom = createFakeDom();
+    dom.input.value = initial;
+    const page = createCaptchaPage({ recognize: async () => "0be7f" });
+    page.install();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await page.fillNow();
+    assert.equal(dom.input.value, "0be7f", `fill should win over ${description}`);
+    assert.ok(dom.input.dispatched.includes("input"), description);
+    assert.ok(dom.input.dispatched.includes("change"), description);
+  }
+});
+
+test("filling works when the field was never focusable or touched", async () => {
+  const dom = createFakeDom();
+  dom.input.value = "";
+  const page = createCaptchaPage({ recognize: async () => "e2c63" });
+  page.install();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // No dblclick at all: the toolbar button path calls fillNow directly.
+  await page.fillNow();
+  assert.equal(dom.input.value, "e2c63");
+});
+
+test("double-clicking the captcha image fills too", async () => {
+  // The old build accepted three entry points: the field, the image, and the
+  // toolbar button. Losing the image one was a regression.
+  const dom = createFakeDom();
+  const page = createCaptchaPage({ recognize: async () => "0be7f" });
+  page.install();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const clickOnImage = doubleClickEvent(dom.image);
+  dom.emitDoubleClick(clickOnImage);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(dom.input.value, "0be7f");
+});
+
+test("double-clicking the field fills and stops the page seeing it", async () => {
+  const dom = createFakeDom();
+  const page = createCaptchaPage({ recognize: async () => "e2c63" });
+  page.install();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const clickOnField = doubleClickEvent(dom.input);
+  dom.emitDoubleClick(clickOnField);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(dom.input.value, "e2c63");
+  assert.equal(clickOnField.prevented, true);
+  assert.equal(clickOnField.stopped, true);
+});
+
+test("double-clicking elsewhere on the page does nothing", async () => {
+  const dom = createFakeDom();
+  const page = createCaptchaPage({ recognize: async () => "0be7f" });
+  page.install();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  dom.input.value = "";
+
+  const elsewhere = doubleClickEvent(new (globalThis.Element)());
+  dom.emitDoubleClick(elsewhere);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(dom.input.value, "");
+  assert.equal(elsewhere.prevented, false);
 });

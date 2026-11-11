@@ -56,6 +56,11 @@ const pageCore = bundleModule(
   "lib/page-core.js",
   [],
 );
+const trackerHosts = bundleModule(
+  await readSource("lib", "tracker-hosts.js"),
+  "lib/tracker-hosts.js",
+  [],
+);
 
 const ocrCore = `${templates}\n${glyph}\n${solver}`;
 const workerTail = `
@@ -94,6 +99,7 @@ const output = `${header}
   const OCR_CORE = ${JSON.stringify(ocrCore)};
   const WORKER_SOURCE = OCR_CORE + ${JSON.stringify(workerTail)};
 
+${trackerHosts}
 ${pageCore}
 ${page}
 })();

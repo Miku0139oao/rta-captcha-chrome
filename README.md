@@ -8,6 +8,10 @@ It prefetches the captcha in the background and fills when you **double-click** 
 
 RTA expires a captcha after about one minute. The extension stops reusing an answer once the challenge is older than that, and when you ask for a fill it replaces an expired challenge first — the same thing that happens when you click the image yourself. Filling always overwrites whatever is in the field, because a half-typed or leftover code is always the wrong one by then.
 
+You can trigger a fill by double-clicking the captcha field, double-clicking the captcha image, or clicking the toolbar icon. If recognition fails, the field is left alone and the tooltip says so.
+
+The extension also blocks RTA's analytics collector (`logman.rta-os.com`), which otherwise sends a behavioural event on every page entry with your user id, screen size, user agent, page URL, and session counters. Blocking it does not change how the portal works.
+
 ## Install
 
 ### Tampermonkey (easiest on Edge and Chrome)
@@ -53,6 +57,7 @@ Then follow steps 3–6 above and select the cloned repository root. Do not run 
 | Layer | Role |
 | --- | --- |
 | `lib/page-core.js` | Shared behaviour for both builds: find the captcha, track its age, refresh an expired one, prefetch, and fill. |
+| `lib/tracker-hosts.js` | The telemetry host list plus the page-level blocker used by the userscript. |
 | Content script | Runs only on RTA official login pages. Wires page-core to the extension transport. |
 | `background.js` | Validates the sender and owns the offscreen OCR document. |
 | `offscreen.js` | Isolated host for the OCR worker. Created lazily; pages cannot open this port. |
@@ -62,7 +67,7 @@ The Tampermonkey build is produced from the same `lib/page-core.js` and `ocr/` s
 
 Uncertain answers are not filled. A challenge that is already past RTA's one-minute lifetime is refreshed before it is read.
 
-Permissions are limited to `offscreen` and the RTA official login hosts. See [README.zh-TW.md](README.zh-TW.md) for the full security notes.
+Permissions are `offscreen` and `declarativeNetRequest` (static rules only, used for the telemetry blocklist), plus the RTA login hosts and the collector host. See [README.zh-TW.md](README.zh-TW.md) for the full security notes.
 
 ## Develop
 
