@@ -4,7 +4,9 @@ English | [繁體中文](README.zh-TW.md)
 
 A loadable Chrome Manifest V3 extension that reads the RTA login captcha **on your computer**. It is a JavaScript port of [`EmbeddedOCRSolver`](https://github.com/Miku0139oao/rta-sales-client-go) from [rta-sales-client-go](https://github.com/Miku0139oao/rta-sales-client-go): five hexadecimal characters recognized with fail-closed template matching. There is no Tesseract, GPU, remote OCR, or 2Captcha.
 
-It prefetches the captcha in the background and fills only when you **double-click** the captcha field (or click the toolbar icon). It does not read account or password fields, does not submit the login form, and does not store credentials.
+It prefetches the captcha in the background and fills when you **double-click** the captcha field (or click the toolbar icon). It does not read account or password fields, does not submit the login form, and does not store credentials.
+
+RTA expires a captcha after about one minute. The extension stops reusing an answer once the challenge is older than that, and when you ask for a fill it replaces an expired challenge first — the same thing that happens when you click the image yourself. Filling always overwrites whatever is in the field, because a half-typed or leftover code is always the wrong one by then.
 
 ## Install
 
@@ -13,12 +15,12 @@ It prefetches the captcha in the background and fills only when you **double-cli
 1. Install [Tampermonkey for Edge](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd) or [for Chrome](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo).
 2. Open the raw userscript; Tampermonkey prompts to install:  
    https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
-3. Click **Install**. If an older copy is already installed, delete it in the Tampermonkey dashboard first and install this **1.0.17** file; old copies do not update reliably.
-4. Open the RTA login page. Click the captcha image to refresh it with the site's own handler. Double-click the captcha input to fill the digits you see. The script does not run automatically. You still submit the login yourself.
+3. Click **Install**. If an older copy is already installed, delete it in the Tampermonkey dashboard first and install the current release; old copies do not update reliably.
+4. Open the RTA login page and double-click the captcha input to fill. You still submit the login yourself.
 
-Violentmonkey and ScriptCat can install the same `.user.js`. Your userscript manager may ask to allow RTA domains on the first fetch; allow them.
+Violentmonkey and ScriptCat can install the same `.user.js`.
 
-This is **not yet listed** on the Chrome Web Store. To load it as an extension instead, there is **no compile step**. `manifest.json` in the repository root is the extension. Download it and load it unpacked.
+The extension is **not listed** on the Chrome Web Store. To load it instead, there is **no compile step**: `manifest.json` in the repository root is the extension.
 
 ### Option 1: Release zip (no git, no Node)
 
@@ -27,7 +29,7 @@ This is **not yet listed** on the Chrome Web Store. To load it as an extension i
 3. Go to `chrome://extensions/`.
 4. Turn on **Developer mode**.
 5. Click **Load unpacked** and select the **extracted folder** (not the zip file).
-6. Open the RTA login page. When the captcha image appears, **double-click the captcha input** (or click the toolbar icon) to fill it. You still confirm and submit the login yourself.
+6. Open the RTA login page and double-click the captcha input. You still confirm and submit the login yourself.
 
 Microsoft Edge uses different button labels for the same flow:
 
@@ -36,7 +38,7 @@ Microsoft Edge uses different button labels for the same flow:
 3. Click **Load unpacked**
 4. Select the **extracted folder that contains `manifest.json`**, not the `.zip` file
 
-To update later, download a new zip, overwrite the extracted folder, and click Reload on the extensions page.
+To update later, download a new zip, overwrite the extracted folder, and click Reload on the extensions page. Release zips are built by CI from the tagged commit, so the zip and the tag always match.
 
 ### Option 2: Clone the source
 
@@ -50,12 +52,15 @@ Then follow steps 3–6 above and select the cloned repository root. Do not run 
 
 | Layer | Role |
 | --- | --- |
-| Content script | Runs only on RTA official login pages. Prefetches; double-click fills. |
-| `background.js` | Validates the sender, OCRs on-screen pixels when possible, otherwise fetches the captcha image from RTA's own endpoint. Releases the OCR document when idle. |
+| `lib/page-core.js` | Shared behaviour for both builds: find the captcha, track its age, refresh an expired one, prefetch, and fill. |
+| Content script | Runs only on RTA official login pages. Wires page-core to the extension transport. |
+| `background.js` | Validates the sender and owns the offscreen OCR document. |
 | `offscreen.js` | Isolated host for the OCR worker. Created lazily; pages cannot open this port. |
 | `ocr/worker.js` | Decodes the image and runs the solver off the login page thread. |
 
-Uncertain answers are not filled. The page is not auto-refreshed; click the captcha image yourself if you need a new one.
+The Tampermonkey build is produced from the same `lib/page-core.js` and `ocr/` sources, so the two cannot behave differently.
+
+Uncertain answers are not filled. A challenge that is already past RTA's one-minute lifetime is refreshed before it is read.
 
 Permissions are limited to `offscreen` and the RTA official login hosts. See [README.zh-TW.md](README.zh-TW.md) for the full security notes.
 
@@ -66,7 +71,10 @@ Node.js 22+ is required. No packages need installing:
 ```powershell
 npm test
 npm run verify
+npm run package     # deterministic extension zip in dist/
 ```
+
+`npm run verify` runs the syntax check, rebuilds the userscript, verifies that the committed artefacts and versions agree with `manifest.json`, and runs the tests. `manifest.json` is the single source of truth for the version; the userscript header and `package.json` are checked against it, and CI refuses a release tag that does not match.
 
 To regenerate packed templates from a checkout of `rta-sales-client-go`:
 
@@ -74,6 +82,8 @@ To regenerate packed templates from a checkout of `rta-sales-client-go`:
 node scripts/generate-template-data.mjs path\to\rta-sales-client-go
 npm run verify
 ```
+
+The generator also precomputes each template's topology hints, which keeps solver start-up cheap; a test verifies the hints against a fresh walk of every bitmap.
 
 ## License
 

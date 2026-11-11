@@ -1,0 +1,31 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm run check:syntax
+      - name: Verify the tag matches manifest.json
+        run: npm run check:version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+      - run: npm test
+      - run: npm run package
+      - name: Publish the extension zip and userscript
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/rta-captcha-chrome-*.zip
+            tampermonkey/rta-captcha.user.js
+          fail_on_unmatched_files: true

@@ -3,10 +3,9 @@ import {
   OCRInputError,
   OCRUncertainError,
 } from "./solver.js";
-import { parsePixelJob } from "../lib/protocol.js";
+import { ANSWER_PATTERN, MAX_PIXEL_COUNT, parsePixelJob } from "../lib/protocol.js";
 
 const MAX_ENCODED_LENGTH = 6 * 1024 * 1024;
-const ANSWER_PATTERN = /^[0-9a-f]{5}$/;
 let solver;
 
 self.addEventListener("message", (event) => {
@@ -92,7 +91,7 @@ async function decodeImage(imageBase64) {
     throw new OCRInputError("Cannot decode captcha image", "decode-failed");
   }
   try {
-    if (bitmap.width * bitmap.height > 2_000_000) {
+    if (bitmap.width * bitmap.height > MAX_PIXEL_COUNT) {
       throw new OCRInputError("Captcha image dimensions are too large", "too-large");
     }
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);

@@ -1,7 +1,15 @@
-const PORT_NAME = "rta-ocr-offscreen-v1";
-const REQUEST_ID_PATTERN = /^[a-f0-9-]{16,64}$/;
+// Offscreen document: the only place the OCR worker runs. The page cannot reach
+// this port; the service worker verifies the sender of every message.
+
+import {
+  ANSWER_PATTERN,
+  OFFSCREEN_IDLE_MESSAGE_TYPE,
+  OFFSCREEN_PORT_NAME,
+  REQUEST_ID_PATTERN,
+} from "./lib/protocol.js";
+
+const IDLE_CLOSE_MS = 25_000;
 const MAX_ENCODED_LENGTH = 6 * 1024 * 1024;
-const IDLE_CLOSE_MS = 25000;
 
 let backgroundPort = null;
 let ocrWorker = null;
@@ -14,7 +22,7 @@ connectToBackground();
 
 function connectToBackground() {
   clearTimeout(reconnectTimer);
-  const port = chrome.runtime.connect({ name: PORT_NAME });
+  const port = chrome.runtime.connect({ name: OFFSCREEN_PORT_NAME });
   backgroundPort = port;
   port.onMessage.addListener((message) => {
     handleBackgroundMessage(message, port);
@@ -39,7 +47,9 @@ function scheduleIdleClose() {
     }
     shuttingDown = true;
     // Wakes the service worker so it can close this document.
-    chrome.runtime.sendMessage({ type: "RTA_CAPTCHA_OFFSCREEN_IDLE" }).catch(() => undefined);
+    chrome.runtime
+      .sendMessage({ type: OFFSCREEN_IDLE_MESSAGE_TYPE })
+      .catch(() => undefined);
   }, IDLE_CLOSE_MS);
 }
 
@@ -113,7 +123,10 @@ function ensureWorker() {
   });
   worker.addEventListener("message", (event) => {
     const message = event.data;
-    if (!REQUEST_ID_PATTERN.test(String(message?.id ?? "")) || !activeJobs.has(message.id)) {
+    if (
+      !REQUEST_ID_PATTERN.test(String(message?.id ?? "")) ||
+      !activeJobs.has(message.id)
+    ) {
       return;
     }
     activeJobs.delete(message.id);
@@ -138,7 +151,7 @@ function sanitizeWorkerResponse(message) {
   if (message.ok === true && message.warmed === true) {
     return { id: message.id, ok: true, warmed: true };
   }
-  if (message.ok === true && /^[0-9a-f]{5}$/.test(String(message.answer ?? ""))) {
+  if (message.ok === true && ANSWER_PATTERN.test(String(message.answer ?? ""))) {
     return { id: message.id, ok: true, answer: message.answer };
   }
   return {

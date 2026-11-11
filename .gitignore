@@ -7,3 +7,4 @@ rta-captcha-chrome-*.zip
 Thumbs.db
 *.log
 
+dist/

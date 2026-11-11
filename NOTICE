@@ -4,6 +4,11 @@ glyph templates from:
   rta-sales-client-go
   https://github.com/Miku0139oao/rta-sales-client-go
   revision 3a21e0ab9bb91d2ad033d226db6a372074f58e0e
+  (templates regenerated from rtasales/embedded_ocr_learned.go,
+   embedded_ocr_consensus_learned.go and embedded_ocr_trained.go)
 
-The upstream project is distributed under the MIT License. The applicable
-copyright and license text are reproduced in LICENSE.
+  Copyright (c) 2026 Miku0139oao
+
+The upstream project is distributed under the MIT License. Its copyright and
+permission notice are reproduced in LICENSE, as the MIT License requires, together
+with the notices for this project.

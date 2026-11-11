@@ -13,4 +13,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm run verify
+      - run: npm run check:syntax
+      # Fails if the committed userscript no longer matches its sources, so a
+      # change to lib/page-core.js or the solver cannot ship a stale bundle.
+      - run: npm run check:version
+      - run: npm test
+      - run: npm run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: dist/rta-captcha-chrome-*.zip
+          if-no-files-found: error

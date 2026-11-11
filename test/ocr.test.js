@@ -4,7 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { LEARNED_GLYPH_TEMPLATES } from "../ocr/templates.generated.js";
+import {
+  LEARNED_GLYPH_TEMPLATES,
+  LEARNED_GLYPH_TEMPLATES_TOPOLOGY,
+} from "../ocr/templates.generated.js";
 import {
   DEFAULT_OCR_ALPHABET,
   EmbeddedOCRSolver,
@@ -82,6 +85,68 @@ test("embedded OCR has every hexadecimal template in both models", () => {
     assert.ok(solver.templates[character].length > 0, character);
     assert.ok(solver.fittedTemplates[character].length > 0, character);
   }
+});
+
+test("precomputed topology hints match a fresh walk of the bitmap", () => {
+  // The generator ships a topology hint per template so the runtime does not have
+  // to flood-fill 8.8k bitmaps on start-up. A hint that ever disagreed with the
+  // bitmap would silently change distance scoring, so verify all of them.
+  let checked = 0;
+  for (const character of DEFAULT_OCR_ALPHABET) {
+    const templates = LEARNED_GLYPH_TEMPLATES[character];
+    const hints = LEARNED_GLYPH_TEMPLATES_TOPOLOGY[character];
+    assert.equal(hints.length, templates.length, character);
+    const glyphs = __testing.decodeGlyphTemplates(templates);
+    for (let index = 0; index < glyphs.length; index += 1) {
+      const expected = __testing.inspectGlyphTopology(glyphs[index]);
+      const hint = hints[index];
+      assert.equal(hint[0], String(expected.holes), character + "#" + index + " holes");
+      assert.equal(
+        hint[1],
+        expected.rightOpening ? "1" : "0",
+        character + "#" + index + " right",
+      );
+      assert.equal(
+        hint[2],
+        expected.leftOpening ? "1" : "0",
+        character + "#" + index + " left",
+      );
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 1000, "only checked " + checked + " templates");
+});
+
+test("a solve classifies each distinct glyph only once", () => {
+  // Baseline and ensemble used to classify the same normalised bitmap four times
+  // per character. Memoisation must be observable and must not change answers.
+  const solver = new EmbeddedOCRSolver();
+  const image = loadRGBAFixture("color-noise-e2c63.json");
+  let uncached = 0;
+  const original = solver.classifyUncached.bind(solver);
+  solver.classifyUncached = (glyph, templates) => {
+    uncached += 1;
+    return original(glyph, templates);
+  };
+  assert.equal(solver.solve(image), "e2c63");
+  assert.equal(uncached, solver.classificationMemo.size);
+  assert.ok(uncached <= 40, "expected at most 40 classifications, saw " + uncached);
+});
+
+test("repeated solves stay fast and deterministic", () => {
+  const solver = new EmbeddedOCRSolver();
+  const image = loadRGBAFixture("color-noise-e2c63.json");
+  solver.solve(image);
+  const timings = [];
+  for (let run = 0; run < 5; run += 1) {
+    const started = performance.now();
+    assert.equal(solver.solve(image), "e2c63");
+    timings.push(performance.now() - started);
+  }
+  timings.sort((left, right) => left - right);
+  // The memo-free implementation took ~260 ms per solve; leave generous headroom
+  // for slow CI machines while still catching a regression to the old cost.
+  assert.ok(timings[2] < 120, "median solve was " + timings[2].toFixed(1) + " ms");
 });
 
 test("acceptMatch allows a farther hit only when the runner-up is clearly worse", () => {

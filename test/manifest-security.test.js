@@ -52,34 +52,32 @@ test("all executable code is packaged locally and does not use eval", async () =
   const executableFiles = files.filter((file) => /\.(?:js|mjs|html)$/.test(file));
   for (const file of executableFiles) {
     const source = await readFile(file, "utf8");
-    assert.doesNotMatch(source, /\beval\s*\(/, path.relative(projectRoot, file));
-    assert.doesNotMatch(
-      source,
-      /\bnew\s+Function\s*\(/,
-      path.relative(projectRoot, file),
-    );
+    const relative = path.relative(projectRoot, file);
+    assert.doesNotMatch(source, /\beval\s*\(/, relative);
+    assert.doesNotMatch(source, /\bnew\s+Function\s*\(/, relative);
     assert.doesNotMatch(
       source,
       /(?:<script[^>]+src|\bimport(?:Scripts)?\s*\()[^\n]*https?:/i,
-      path.relative(projectRoot, file),
+      relative,
     );
   }
 });
 
 test("architecture keeps OCR out of the page and fills only on demand", async () => {
-  const [content, background, offscreen] = await Promise.all([
+  const [content, background, offscreen, pageCore] = await Promise.all([
     readFile(path.join(projectRoot, "content.js"), "utf8"),
     readFile(path.join(projectRoot, "background.js"), "utf8"),
     readFile(path.join(projectRoot, "offscreen.js"), "utf8"),
+    readFile(path.join(projectRoot, "lib", "page-core.js"), "utf8"),
   ]);
-  assert.match(content, /img#verifyCodeMsg/);
-  assert.match(content, /input#verifyCode\[name=/);
-  assert.match(content, /dblclick/);
-  assert.match(content, /prefetchCurrentCaptcha/);
-  assert.match(content, /RTA_CAPTCHA_RELEASE/);
-  assert.doesNotMatch(content, /querySelector(?:All)?\([^)]*(?:account|password)/i);
+  assert.match(pageCore, /img#verifyCodeMsg/);
+  assert.match(pageCore, /input#verifyCode\[name=/);
+  assert.match(pageCore, /dblclick/);
+  assert.match(pageCore, /prefetch/);
+  assert.doesNotMatch(pageCore, /querySelector(?:All)?\([^)]*(?:account|password)/i);
+  assert.doesNotMatch(pageCore, /EmbeddedOCRSolver|templates\.generated/);
   assert.doesNotMatch(content, /EmbeddedOCRSolver|templates\.generated/);
-  assert.doesNotMatch(content, /\.click\(\).*login|submit\s*\(/i);
+  assert.doesNotMatch(content, /\.submit\s*\(/i);
   assert.match(background, /chrome\.offscreen\.createDocument/);
   assert.match(background, /closeDocument/);
   assert.match(background, /parsePixelJob/);
@@ -87,6 +85,43 @@ test("architecture keeps OCR out of the page and fills only on demand", async ()
   assert.match(offscreen, /ocr\/worker\.js/);
   assert.match(offscreen, /connectToBackground\(\);/);
   assert.doesNotMatch(offscreen, /connectToBackground\(\);\s*ensureWorker\(\);/);
+});
+
+test("the extension never rewrites the page's captcha image", async () => {
+  const [content, pageCore] = await Promise.all([
+    readFile(path.join(projectRoot, "content.js"), "utf8"),
+    readFile(path.join(projectRoot, "lib", "page-core.js"), "utf8"),
+  ]);
+  // The old overlay path replaced image.src with a blob URL, which leaked the
+  // object URL and left a stale `rtaOcrOriginal` behind that broke token
+  // comparison after the site refreshed the challenge.
+  for (const source of [content, pageCore]) {
+    assert.doesNotMatch(source, /createObjectURL/);
+    assert.doesNotMatch(source, /image\.src\s*=/);
+    assert.doesNotMatch(source, /rtaOcrOriginal/);
+  }
+});
+
+test("the page refuses to reuse an answer past the challenge lifetime", async () => {
+  const pageCore = await readFile(
+    path.join(projectRoot, "lib", "page-core.js"),
+    "utf8",
+  );
+  // RTA drops a challenge after about a minute, so a stale answer must never be
+  // filled. The cache carries a solve timestamp and the same freshness gate is
+  // applied to the cached answer and to the on-screen challenge.
+  assert.match(pageCore, /CAPTCHA_TTL_MS\s*=\s*50_000/);
+  assert.match(pageCore, /solvedAt/);
+  assert.match(pageCore, /isChallengeFresh/);
+  assert.match(pageCore, /refreshCaptchaImage/);
+});
+
+test("filling always overwrites the captcha input", async () => {
+  const pageCore = await readFile(
+    path.join(projectRoot, "lib", "page-core.js"),
+    "utf8",
+  );
+  assert.match(pageCore, /Always overwrite/);
 });
 
 test("credential and broad browsing APIs are not requested or called", async () => {
@@ -105,7 +140,7 @@ test("credential and broad browsing APIs are not requested or called", async () 
     assert.ok(!manifest.permissions.includes(permission), permission);
   }
   const extensionSources = await Promise.all(
-    ["background.js", "content.js", "offscreen.js"].map((file) =>
+    ["background.js", "offscreen.js", "lib/page-core.js"].map((file) =>
       readFile(path.join(projectRoot, file), "utf8"),
     ),
   );

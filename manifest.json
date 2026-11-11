@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "RTA Captcha OCR",
-  "version": "1.0.11",
-  "description": "本機辨識 RTA 驗證碼。背景預先算好，雙擊輸入欄或點工具列圖示填入。不讀帳密、不送出登入。",
+  "version": "1.1.0",
+  "description": "本機辨識 RTA 驗證碼。背景預先算好，雙擊輸入欄或工具列圖示填入；驗證碼逾時會自動換一張。不讀帳密、不送出登入。",
   "homepage_url": "https://github.com/Miku0139oao/rta-captcha-chrome",
   "minimum_chrome_version": "109",
   "icons": {

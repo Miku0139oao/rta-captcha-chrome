@@ -1,27 +1,33 @@
+// MV3 service worker.
+//
+// Validates every sender, owns the offscreen document that hosts the OCR worker,
+// and answers content-script solve requests. It never touches the page DOM.
+
 import {
   ANSWER_PATTERN,
+  FILL_MESSAGE_TYPE,
+  MAX_IMAGE_BYTES,
+  MESSAGE_TYPE,
+  OFFSCREEN_IDLE_MESSAGE_TYPE,
+  OFFSCREEN_PAGE,
+  OFFSCREEN_PORT_NAME,
+  RELEASE_MESSAGE_TYPE,
   REQUEST_ID_PATTERN,
+  WARMUP_MESSAGE_TYPE,
   hasImageSignature,
   isTrustedSSOPageUrl,
   parsePixelJob,
   validateCaptchaUrl,
 } from "./lib/protocol.js";
 
-const CONTENT_MESSAGE_TYPE = "RTA_CAPTCHA_SOLVE";
-const WARMUP_MESSAGE_TYPE = "RTA_CAPTCHA_WARMUP";
-const RELEASE_MESSAGE_TYPE = "RTA_CAPTCHA_RELEASE";
-const FILL_MESSAGE_TYPE = "RTA_CAPTCHA_FILL";
-const OFFSCREEN_IDLE_MESSAGE_TYPE = "RTA_CAPTCHA_OFFSCREEN_IDLE";
-const OFFSCREEN_PORT_NAME = "rta-ocr-offscreen-v1";
-const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const OFFSCREEN_URL = chrome.runtime.getURL(OFFSCREEN_PAGE);
 const FETCH_TIMEOUT_MS = 12_000;
 const OCR_TIMEOUT_MS = 20_000;
 const IDLE_RELEASE_MS = 20_000;
 
 let offscreenPort = null;
 let offscreenCreation = null;
-let idleTimer = 0;
+let idleTimer = null;
 const portWaiters = new Set();
 const pendingJobs = new Map();
 
@@ -74,7 +80,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void warmupEngine().then(sendResponse);
     return true;
   }
-  if (message?.type !== CONTENT_MESSAGE_TYPE) {
+  if (message?.type !== MESSAGE_TYPE) {
     return false;
   }
   void handleContentRequest(message, sender).then(sendResponse);
@@ -85,7 +91,9 @@ chrome.action.onClicked.addListener((tab) => {
   if (!Number.isInteger(tab?.id)) {
     return;
   }
-  chrome.tabs.sendMessage(tab.id, { type: FILL_MESSAGE_TYPE }).catch(() => undefined);
+  chrome.tabs
+    .sendMessage(tab.id, { type: FILL_MESSAGE_TYPE })
+    .catch(() => undefined);
 });
 
 async function handleContentRequest(message, sender) {
@@ -294,7 +302,7 @@ function bumpIdleRelease() {
 
 async function releaseOffscreen() {
   clearTimeout(idleTimer);
-  idleTimer = 0;
+  idleTimer = null;
   if (pendingJobs.size > 0) {
     bumpIdleRelease();
     return;
@@ -333,11 +341,22 @@ async function ensureOffscreenDocument() {
     if (await hasOffscreenDocument()) {
       return;
     }
-    await chrome.offscreen.createDocument({
-      url: "offscreen.html",
-      reasons: ["BLOBS"],
-      justification: "Decode local captcha image bytes and host the bundled OCR worker.",
-    });
+    try {
+      await chrome.offscreen.createDocument({
+        url: OFFSCREEN_PAGE,
+        reasons: ["BLOBS"],
+        justification:
+          "Decode local captcha image bytes and host the bundled OCR worker.",
+      });
+    } catch (error) {
+      // Chrome 109–115 have no getContexts, so a document created by an earlier
+      // wake-up is invisible to hasOffscreenDocument and createDocument throws.
+      // Treat "already exists" as success: the port handshake below decides
+      // whether it is actually usable.
+      if (!/single offscreen/i.test(String(error?.message ?? error))) {
+        throw error;
+      }
+    }
   })();
   try {
     await offscreenCreation;
@@ -347,18 +366,18 @@ async function ensureOffscreenDocument() {
 }
 
 async function hasOffscreenDocument() {
-  if (typeof chrome.runtime.getContexts === "function") {
-    const contexts = await chrome.runtime.getContexts({
-      contextTypes: ["OFFSCREEN_DOCUMENT"],
-      documentUrls: [OFFSCREEN_URL],
-    });
-    return contexts.length > 0;
+  // getContexts exists from Chrome 116; the manifest floor is 109. Below that
+  // there is no supported way to enumerate offscreen documents (clients.matchAll
+  // in a service worker never reports them), so report "unknown" and let
+  // createDocument's duplicate-document error be handled by the caller.
+  if (typeof chrome.runtime.getContexts !== "function") {
+    return false;
   }
-  const contexts = await clients.matchAll({
-    includeUncontrolled: true,
-    type: "window",
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [OFFSCREEN_URL],
   });
-  return contexts.some((context) => context.url === OFFSCREEN_URL);
+  return contexts.length > 0;
 }
 
 function waitForOffscreenPort(timeoutMs) {

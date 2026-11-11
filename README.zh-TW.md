@@ -2,9 +2,15 @@
 
 [English](README.md) | 繁體中文
 
-這是一個完全離線辨識 RTA 登入驗證碼的 Chrome Manifest V3 擴充功能。OCR 是 `rta-sales-client-go` `EmbeddedOCRSolver` 的 JavaScript 移植版，固定辨識 5 位十六進位字元。辨識結果不夠確定時不猜答案；不會自動換圖，也不會送出表單。
+這是一個完全離線辨識 RTA 登入驗證碼的 Chrome Manifest V3 擴充功能。OCR 是 `rta-sales-client-go` `EmbeddedOCRSolver` 的 JavaScript 移植版，固定辨識 5 位十六進位字元。辨識結果不夠確定時不猜答案，也不會送出表單。
 
 驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄**（或點工具列圖示）才填入。它不會讀取帳號或密碼欄位、不會提交登入表單，也不會儲存登入資料。
+
+RTA 的驗證碼大約一分鐘後失效，因此：
+
+- 超過有效期限的辨識結果不會再被填入。
+- 雙擊時若畫面上那張已經過期，會先換一張再辨識；這跟使用者自己點驗證碼圖換圖是同一件事。
+- 填入時**一律覆蓋**欄位內容。留著先前打一半或舊的驗證碼只會讓登入失敗，覆蓋掉才符合實際狀況。
 
 ## 安裝
 
@@ -15,7 +21,7 @@
    https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
 3. 按「安裝」。
 4. 開啟 RTA 登入頁。驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄**才填入。頁面上沒有浮層。登入仍由你送出。
-5. 若已安裝舊版，到 Tampermonkey 儀表板刪除後重裝（版本需為 **1.0.17**）。
+5. 若已安裝舊版，到 Tampermonkey 儀表板刪除後重裝。
 
 Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次取圖時腳本管理器可能詢問是否允許 RTA 網域，選允許。
 
@@ -37,7 +43,7 @@ Microsoft Edge 按鈕名稱不同，流程一樣：
 3. 按「**載入解壓縮**」（這就是 Chrome 的「載入未封裝項目」）
 4. 選**已經解壓縮、裡面有 `manifest.json` 的資料夾**，不要選 `.zip` 檔
 
-之後若擴充功能更新，再下載新的 zip、覆蓋解壓目錄，然後在擴充功能頁按重新整理。
+之後若擴充功能更新，再下載新的 zip、覆蓋解壓目錄，然後在擴充功能頁按重新整理。Release zip 由 CI 從被標記的 commit 產生，因此 zip 與 tag 一定對應。
 
 ### 方法二：clone 原始碼
 
@@ -51,12 +57,15 @@ git clone https://github.com/Miku0139oao/rta-captcha-chrome.git
 
 資料流分成四個隔離層：
 
-1. Content script 只在 RTA 官方登入頁執行；優先讀取畫面上已顯示的驗證碼像素，雙擊才填入。
+1. `lib/page-core.js` 是擴充功能與 Tampermonkey 共用的頁面邏輯：找驗證碼、計算有效期限、必要時換圖、預先辨識、填入。
+2. Content script 只在 RTA 官方登入頁執行，接上 extension 的傳輸層。
 2. `background.js` 驗證訊息來源後執行本機 OCR；必要時才向 RTA 官方驗證碼端點取得圖片。
 3. `offscreen.html` / `offscreen.js` 透過經過來源驗證的私有 port 承載 OCR Worker，頁面內容無法直接取得此 port。
-4. `ocr/worker.js` 在 dedicated Web Worker 內解碼與辨識，不占用登入頁面的主執行緒。
+5. `ocr/worker.js` 在 dedicated Web Worker 內解碼與辨識，不占用登入頁面的主執行緒。
 
-Worker 只回傳符合固定格式的答案。兩種正規化模型不一致、距離過大或最佳與次佳差距不足時會 fail closed。無法辨識時不會自動換圖、不會碰觸其他按鈕或送出表單；請自行點驗證碼圖換一張後再雙擊。
+Tampermonkey 版由同一份 `lib/page-core.js` 與 `ocr/` 產生，兩邊行為不會分岔。
+
+Worker 只回傳符合固定格式的答案。兩種正規化模型不一致、距離過大或最佳與次佳差距不足時會 fail closed。無法辨識時會換一張再試一次；仍失敗就停手，不會碰觸登入按鈕或送出表單。
 
 ## 權限理由
 
@@ -77,7 +86,7 @@ Worker 只回傳符合固定格式的答案。兩種正規化模型不一致、�
 - Cookie 不外洩：驗證碼請求使用瀏覽器原生 `credentials: "include"`，Cookie 只會由瀏覽器直接送往 RTA 官方主機。程式沒有 `cookies` 權限，不讀取 `document.cookie`，也看不到或記錄 Cookie 值。
 - 不存憑證：程式沒有 storage 權限，不讀取、雜湊、記錄或傳送任何憑證。
 - 僅填驗證碼：只針對登入頁的驗證碼輸入欄位；DOM 契約不符時直接停止。
-- 不覆蓋手動輸入：驗證碼欄位已有使用者輸入時不覆蓋其內容。
+- 強制覆蓋舊輸入：欄位裡舊的或打一半的驗證碼一定已經失效，因此填入時直接覆蓋。
 - 不自動登入：不點擊登入按鈕、不送出表單。使用者仍需自行檢查並送出。
 - 不記錄敏感內容：production code 不輸出圖片、答案、URL 或表單內容到 console。
 - 有界資源：圖片大小與像素數有上限、網路與 OCR 都有 timeout；離開登入頁或閒置時釋放 OCR 資源。
@@ -92,7 +101,7 @@ npm run check:syntax
 npm run verify
 ```
 
-測試涵蓋合成驗證碼辨識、彩色雜訊 regression fixture、uncertainty fail-closed、輸入尺寸、glyph topology、雙 extraction margin 與 packed overlap 距離，以及 Manifest V3 權限最小化、嚴格 CSP、無遠端程式碼、無 eval、content/service-worker/offscreen/dedicated-worker 分層。
+測試涵蓋合成驗證碼辨識、彩色雜訊 regression fixture、uncertainty fail-closed、輸入尺寸、glyph topology、預先算好的 topology 與實際 bitmap 一致、重複分類的快取、雙 extraction margin 與 packed overlap 距離，以及驗證碼有效期限、必填覆蓋、Manifest V3 權限最小化、嚴格 CSP、無遠端程式碼、無 eval、content/service-worker/offscreen/dedicated-worker 分層。
 
 ## 更新內建模板
 
@@ -103,7 +112,7 @@ node scripts/generate-template-data.mjs path\to\rta-sales-client-go
 npm run verify
 ```
 
-產生檔頭會記錄來源檔的 SHA-256，方便稽核。
+產生檔頭會記錄來源檔的 SHA-256，方便稽核。產生器也會預先算好每個模板的 topology，讓 solver 啟動不必重跑 flood fill；測試會逐一比對這些預先算好的值。
 
 ## 授權
 
