@@ -4,7 +4,7 @@
 
 這是一個完全離線辨識 RTA 登入驗證碼的 Chrome Manifest V3 擴充功能。OCR 是 `rta-sales-client-go` `EmbeddedOCRSolver` 的 JavaScript 移植版，固定辨識 5 位十六進位字元。辨識結果不夠確定時不猜答案，也不會送出表單。
 
-驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄**（或點工具列圖示）才填入。它不會讀取帳號或密碼欄位、不會提交登入表單，也不會儲存登入資料。
+驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄、雙擊驗證碼圖片，或點工具列圖示**才填入。它不會讀取帳號或密碼欄位、不會提交登入表單，也不會儲存登入資料。
 
 RTA 的驗證碼大約一分鐘後失效，因此：
 
@@ -24,7 +24,7 @@ RTA 的驗證碼大約一分鐘後失效，因此：
 2. 打開這支腳本的 Raw 頁，Tampermonkey 會跳出安裝：  
    https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
 3. 按「安裝」。
-4. 開啟 RTA 登入頁。驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄**才填入。頁面上沒有浮層。登入仍由你送出。
+4. 開啟 RTA 登入頁。驗證碼圖會在背景先辨識；**快速雙擊驗證碼輸入欄或圖片**才填入。頁面上沒有浮層。登入仍由你送出。
 5. 若已安裝舊版，到 Tampermonkey 儀表板刪除後重裝。
 
 Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次取圖時腳本管理器可能詢問是否允許 RTA 網域，選允許。
@@ -38,7 +38,7 @@ Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次取圖時�
 3. Chrome 網址列輸入 `chrome://extensions/` 後 Enter。
 4. 右上角打開「開發人員模式」。
 5. 按「載入未封裝項目」，選**解壓縮後的那個資料夾**（不要選 zip 檔本身）。
-6. 開啟 RTA 登入頁。圖出來後**雙擊驗證碼輸入欄**（或點工具列圖示）填入；登入仍由你自己確認後送出。
+6. 開啟 RTA 登入頁。圖出來後**雙擊驗證碼輸入欄或圖片**（或點工具列圖示）填入；登入仍由你自己確認後送出。
 
 Microsoft Edge 按鈕名稱不同，流程一樣：
 
@@ -59,13 +59,15 @@ git clone https://github.com/Miku0139oao/rta-captcha-chrome.git
 
 ## MV3 架構
 
-資料流分成四個隔離層：
+資料流分成五個隔離層：
 
 1. `lib/page-core.js` 是擴充功能與 Tampermonkey 共用的頁面邏輯：找驗證碼、計算有效期限、必要時換圖、預先辨識、填入。
-2. Content script 只在 RTA 官方登入頁執行，接上 extension 的傳輸層。
-2. `background.js` 驗證訊息來源後執行本機 OCR；必要時才向 RTA 官方驗證碼端點取得圖片。
-3. `offscreen.html` / `offscreen.js` 透過經過來源驗證的私有 port 承載 OCR Worker，頁面內容無法直接取得此 port。
+2. `content.js` 由 `src/content.js` 打包產生，只在 RTA 官方登入頁執行，接上 extension 的傳輸層。
+3. `background.js` 驗證訊息來源後執行本機 OCR；必要時才向 RTA 官方驗證碼端點取得圖片。
+4. `offscreen.html` / `offscreen.js` 透過經過來源驗證的私有 port 承載 OCR Worker，頁面內容無法直接取得此 port。
 5. `ocr/worker.js` 在 dedicated Web Worker 內解碼與辨識，不占用登入頁面的主執行緒。
+
+另外有兩個不參與 OCR 的檔案：`lib/protocol.js` 集中管理訊息名稱、URL 契約與答案格式；`lib/tracker-hosts.js` 與 `rules/trackers.json` 定義要封鎖的遙測主機。
 
 Tampermonkey 版由同一份 `lib/page-core.js` 與 `ocr/` 產生，兩邊行為不會分岔。
 
@@ -73,7 +75,7 @@ Worker 只回傳符合固定格式的答案。兩種正規化模型不一致、�
 
 ## 權限理由
 
-權限刻意維持最小範圍：
+權限維持在實際需要的最小集合。`declarativeNetRequest` 是為了封鎖遙測才加入的，且只使用靜態規則：
 
 | 權限 | 用途 |
 | --- | --- |
@@ -88,7 +90,7 @@ Worker 只回傳符合固定格式的答案。兩種正規化模型不一致、�
 ## 安全與隱私
 
 - 無遠端程式碼：所有 JavaScript、OCR 邏輯與模板都包在擴充功能中，CSP 僅允許 `'self'`，禁止 object、inline script 與 eval。
-- 無外部 OCR：圖片不會傳給第三方 OCR、分析、遙測或記錄服務；程式沒有第三方網路端點。
+- 無外部 OCR：圖片不會傳給第三方 OCR、分析、遙測或記錄服務；程式不對外發出任何請求，只會封鎖 RTA 自己的遙測主機。
 - Cookie 不外洩：驗證碼請求使用瀏覽器原生 `credentials: "include"`，Cookie 只會由瀏覽器直接送往 RTA 官方主機。程式沒有 `cookies` 權限，不讀取 `document.cookie`，也看不到或記錄 Cookie 值。
 - 不存憑證：程式沒有 storage 權限，不讀取、雜湊、記錄或傳送任何憑證。
 - 僅填驗證碼：只針對登入頁的驗證碼輸入欄位；DOM 契約不符時直接停止。
@@ -104,11 +106,16 @@ Worker 只回傳符合固定格式的答案。兩種正規化模型不一致、�
 
 ```powershell
 npm test
-npm run check:syntax
-npm run verify
+npm run build       # 重新產生 content.js 與 userscript
+npm run verify      # 語法檢查、建置、版本與產物一致性、測試
+npm run package     # 產生可重現的擴充功能 zip 到 dist/
 ```
 
-測試涵蓋合成驗證碼辨識、彩色雜訊 regression fixture、uncertainty fail-closed、輸入尺寸、glyph topology、預先算好的 topology 與實際 bitmap 一致、重複分類的快取、雙 extraction margin 與 packed overlap 距離，以及驗證碼有效期限、必填覆蓋、Manifest V3 權限最小化、嚴格 CSP、無遠端程式碼、無 eval、content/service-worker/offscreen/dedicated-worker 分層。
+`content.js` 與 `tampermonkey/rta-captcha.user.js` 都是產生檔且已提交。要改行為請改 `src/content.js`、`lib/` 與 `ocr/`，再跑 `npm run build`；若提交的產物與來源不一致，CI 會失敗。
+
+兩者都必須是 classic script：content script 只要含有 `import` 就是語法錯誤，Chrome 會直接丟棄整個檔案且不會回報，因此測試會用 `vm.Script` 以 classic script 編譯它們。
+
+測試涵蓋合成驗證碼辨識、彩色雜訊 regression fixture、uncertainty fail-closed、輸入尺寸、glyph topology、預先算好的 topology 與實際 bitmap 一致、重複分類的快取、雙 extraction margin 與 packed overlap 距離、驗證碼有效期限與必填覆蓋、遙測封鎖規則與主機清單一致、產物可否作為 classic script 載入，以及 Manifest V3 權限、嚴格 CSP、無遠端程式碼、無 eval、content/service-worker/offscreen/dedicated-worker 分層。
 
 ## 更新內建模板
 

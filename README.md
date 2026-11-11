@@ -4,7 +4,7 @@ English | [繁體中文](README.zh-TW.md)
 
 A loadable Chrome Manifest V3 extension that reads the RTA login captcha **on your computer**. It is a JavaScript port of [`EmbeddedOCRSolver`](https://github.com/Miku0139oao/rta-sales-client-go) from [rta-sales-client-go](https://github.com/Miku0139oao/rta-sales-client-go): five hexadecimal characters recognized with fail-closed template matching. There is no Tesseract, GPU, remote OCR, or 2Captcha.
 
-It prefetches the captcha in the background and fills when you **double-click** the captcha field (or click the toolbar icon). It does not read account or password fields, does not submit the login form, and does not store credentials.
+It prefetches the captcha in the background and fills when you **double-click** the captcha field, double-click the captcha image, or click the toolbar icon. It does not read account or password fields, does not submit the login form, and does not store credentials.
 
 RTA expires a captcha after about one minute. The extension stops reusing an answer once the challenge is older than that, and when you ask for a fill it replaces an expired challenge first — the same thing that happens when you click the image yourself. Filling always overwrites whatever is in the field, because a half-typed or leftover code is always the wrong one by then.
 
@@ -20,7 +20,7 @@ The extension also blocks RTA's analytics collector (`logman.rta-os.com`), which
 2. Open the raw userscript; Tampermonkey prompts to install:  
    https://github.com/Miku0139oao/rta-captcha-chrome/raw/main/tampermonkey/rta-captcha.user.js
 3. Click **Install**. If an older copy is already installed, delete it in the Tampermonkey dashboard first and install the current release; old copies do not update reliably.
-4. Open the RTA login page and double-click the captcha input to fill. You still submit the login yourself.
+4. Open the RTA login page and double-click the captcha input or image to fill. You still submit the login yourself.
 
 Violentmonkey and ScriptCat can install the same `.user.js`.
 
@@ -33,7 +33,7 @@ The extension is **not listed** on the Chrome Web Store. To load it instead, the
 3. Go to `chrome://extensions/`.
 4. Turn on **Developer mode**.
 5. Click **Load unpacked** and select the **extracted folder** (not the zip file).
-6. Open the RTA login page and double-click the captcha input. You still confirm and submit the login yourself.
+6. Open the RTA login page and double-click the captcha input or image. You still confirm and submit the login yourself.
 
 Microsoft Edge uses different button labels for the same flow:
 
@@ -57,7 +57,9 @@ Then follow steps 3–6 above and select the cloned repository root. Do not run 
 | Layer | Role |
 | --- | --- |
 | `lib/page-core.js` | Shared behaviour for both builds: find the captcha, track its age, refresh an expired one, prefetch, and fill. |
+| `lib/protocol.js` | Message names, URL contract and the answer format shared by every context. |
 | `lib/tracker-hosts.js` | The telemetry host list plus the page-level blocker used by the userscript. |
+| `rules/trackers.json` | Static declarativeNetRequest rules that drop the telemetry host inside the browser. |
 | Content script | Runs only on RTA official login pages. Wires page-core to the extension transport. Generated from `src/content.js` into a classic script. |
 | `background.js` | Validates the sender and owns the offscreen OCR document. |
 | `offscreen.js` | Isolated host for the OCR worker. Created lazily; pages cannot open this port. |
@@ -65,7 +67,7 @@ Then follow steps 3–6 above and select the cloned repository root. Do not run 
 
 The Tampermonkey build is produced from the same `lib/page-core.js` and `ocr/` sources, so the two cannot behave differently.
 
-Uncertain answers are not filled. A challenge that is already past RTA's one-minute lifetime is refreshed before it is read.
+Uncertain answers are not filled, and the field is left untouched in that case. A challenge that is already past RTA's one-minute lifetime is refreshed before it is read.
 
 Permissions are `offscreen` and `declarativeNetRequest` (static rules only, used for the telemetry blocklist), plus the RTA login hosts and the collector host. See [README.zh-TW.md](README.zh-TW.md) for the full security notes.
 
@@ -82,7 +84,7 @@ npm run package     # deterministic extension zip in dist/
 
 `content.js` and `tampermonkey/rta-captcha.user.js` are generated and committed. Edit `src/content.js`, `lib/` and `ocr/`, then run `npm run build`; CI fails if a committed artefact does not match its sources. Both are plain classic scripts — a content script that contains an `import` statement is a syntax error and Chrome drops the whole file, so a test compiles them as classic scripts.
 
-`npm run verify` runs the syntax check, rebuilds the userscript, verifies that the committed artefacts and versions agree with `manifest.json`, and runs the tests. `manifest.json` is the single source of truth for the version; the userscript header and `package.json` are checked against it, and CI refuses a release tag that does not match.
+`npm run verify` runs the syntax check, rebuilds both artefacts, verifies that the committed artefacts and versions agree with `manifest.json`, and runs the tests. `manifest.json` is the single source of truth for the version; the userscript header and `package.json` are checked against it, and CI refuses a release tag that does not match.
 
 To regenerate packed templates from a checkout of `rta-sales-client-go`:
 
