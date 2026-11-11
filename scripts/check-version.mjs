@@ -46,20 +46,23 @@ if (releaseTag !== "" && releaseTag !== `v${version}`) {
   problems.push(`release tag ${releaseTag} does not match manifest ${version}`);
 }
 
-// An uncommitted rebuild is the other way version drift shows up: the committed
-// bundle no longer matches its sources. Compare without touching the worktree.
-try {
-  execFileSync(
-    process.execPath,
-    [path.join(root, "scripts", "build-userscript.mjs"), "--check"],
-    { stdio: "pipe" },
-  );
-} catch (error) {
-  problems.push(
-    `the committed userscript is out of date with its sources: ${String(
-      error.stderr ?? error.message,
-    ).trim()}`,
-  );
+// An uncommitted rebuild is the other way drift shows up: a committed artefact
+// that no longer matches its sources. Compare without touching the worktree.
+for (const [script, label] of [
+  ["build-userscript.mjs", "userscript"],
+  ["build-content.mjs", "content script"],
+]) {
+  try {
+    execFileSync(process.execPath, [path.join(root, "scripts", script), "--check"], {
+      stdio: "pipe",
+    });
+  } catch (error) {
+    problems.push(
+      `the committed ${label} is out of date with its sources: ${String(
+        error.stderr ?? error.message,
+      ).trim()}`,
+    );
+  }
 }
 
 if (problems.length > 0) {

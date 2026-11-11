@@ -16,6 +16,7 @@ import {
   WARMUP_MESSAGE_TYPE,
   hasImageSignature,
   isTrustedSSOPageUrl,
+  parseDeclaredImageLength,
   parsePixelJob,
   validateCaptchaUrl,
 } from "./lib/protocol.js";
@@ -191,13 +192,9 @@ async function fetchCaptchaBytes(url) {
     if (!response.ok || response.url !== url) {
       throw new Error("Captcha request failed");
     }
-    const declaredLength = Number(response.headers.get("content-length"));
-    if (
-      Number.isFinite(declaredLength) &&
-      (declaredLength <= 0 || declaredLength > MAX_IMAGE_BYTES)
-    ) {
-      throw new Error("Captcha response length is invalid");
-    }
+    // Missing Content-Length is normal (the endpoint gzips); only a present but
+    // out-of-range header is an error. The decoded byte length is checked below.
+    parseDeclaredImageLength(response.headers.get("content-length"));
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES || !hasImageSignature(bytes)) {
       throw new Error("Captcha response is not a supported image");

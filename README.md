@@ -58,7 +58,7 @@ Then follow steps 3–6 above and select the cloned repository root. Do not run 
 | --- | --- |
 | `lib/page-core.js` | Shared behaviour for both builds: find the captcha, track its age, refresh an expired one, prefetch, and fill. |
 | `lib/tracker-hosts.js` | The telemetry host list plus the page-level blocker used by the userscript. |
-| Content script | Runs only on RTA official login pages. Wires page-core to the extension transport. |
+| Content script | Runs only on RTA official login pages. Wires page-core to the extension transport. Generated from `src/content.js` into a classic script. |
 | `background.js` | Validates the sender and owns the offscreen OCR document. |
 | `offscreen.js` | Isolated host for the OCR worker. Created lazily; pages cannot open this port. |
 | `ocr/worker.js` | Decodes the image and runs the solver off the login page thread. |
@@ -75,9 +75,12 @@ Node.js 22+ is required. No packages need installing:
 
 ```powershell
 npm test
-npm run verify
+npm run build       # regenerate content.js and the userscript
+npm run verify      # syntax, build, version/artefact check, tests
 npm run package     # deterministic extension zip in dist/
 ```
+
+`content.js` and `tampermonkey/rta-captcha.user.js` are generated and committed. Edit `src/content.js`, `lib/` and `ocr/`, then run `npm run build`; CI fails if a committed artefact does not match its sources. Both are plain classic scripts — a content script that contains an `import` statement is a syntax error and Chrome drops the whole file, so a test compiles them as classic scripts.
 
 `npm run verify` runs the syntax check, rebuilds the userscript, verifies that the committed artefacts and versions agree with `manifest.json`, and runs the tests. `manifest.json` is the single source of truth for the version; the userscript header and `package.json` are checked against it, and CI refuses a release tag that does not match.
 

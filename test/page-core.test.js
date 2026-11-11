@@ -4,11 +4,8 @@ import test from "node:test";
 // page-core reaches for DOM globals at call time, not at import time, so the
 // pure parts of it can be exercised in Node to lock in the one-minute lifetime
 // rules without a browser.
-import {
-  ANSWER_PATTERN,
-  CAPTCHA_TTL_MS,
-  DEFAULT_HINTS,
-} from "../lib/page-core.js";
+import { CAPTCHA_TTL_MS, DEFAULT_HINTS } from "../lib/page-core.js";
+import { ANSWER_PATTERN } from "../lib/protocol.js";
 
 test("the answer contract stays five lowercase hex characters", () => {
   for (const valid of ["0be7f", "e2c63", "00000", "fffff"]) {

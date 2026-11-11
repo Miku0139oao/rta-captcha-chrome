@@ -1,17 +1,19 @@
 {
   "name": "rta-captcha-chrome",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "type": "module",
   "description": "Dependency-free Chrome MV3 extension for local RTA captcha OCR",
   "scripts": {
+    "generate:templates": "node scripts/generate-template-data.mjs",
+    "build:content": "node scripts/build-content.mjs",
     "build:userscript": "node scripts/build-userscript.mjs",
+    "build": "npm run build:content && npm run build:userscript",
     "package": "node scripts/package-extension.mjs",
     "check:syntax": "node scripts/check-syntax.mjs",
     "check:version": "node scripts/check-version.mjs",
     "test": "node --test",
-    "verify": "npm run check:syntax && npm run build:userscript && npm run check:version && npm test",
-    "generate:templates": "node scripts/generate-template-data.mjs"
+    "verify": "npm run check:syntax && npm run build && npm run check:version && npm test"
   },
   "engines": {
     "node": ">=22"

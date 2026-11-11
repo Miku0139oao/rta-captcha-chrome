@@ -2,65 +2,42 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { bundleModule, readSource } from "./lib/bundle.mjs";
 import { readVersion } from "./lib/version.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-async function readSource(...parts) {
-  const source = await readFile(path.join(root, ...parts), "utf8");
-  // Building on Windows (core.autocrlf=true) must produce the same bytes as
-  // building on Linux CI, otherwise every rebuild rewrites the committed
-  // userscript. Normalise before embedding anything into the bundle.
-  return source.split("\r\n").join("\n");
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// Drops every ESM import block for the given specifiers and removes the
-// `export` keyword, leaving plain top-level declarations that the userscript can
-// concatenate. Anything left over is a build error rather than a silent runtime
-// failure, so a newly added dependency cannot slip through unnoticed.
-function bundleModule(source, sourceName, specifiers) {
-  let bundled = source;
-  for (const specifier of specifiers) {
-    bundled = bundled.replace(
-      new RegExp(
-        `import\\s*\\{[\\s\\S]*?\\}\\s*from\\s*["']${escapeRegExp(specifier)}["'];?[ \\t]*\\n?`,
-        "g",
-      ),
-      "",
-    );
-  }
-  bundled = bundled.replace(/^export /gm, "");
-  if (/^\s*import\s/m.test(bundled) || /^\s*export\s/m.test(bundled)) {
-    throw new Error(`${sourceName} still contains ESM import/export after bundling`);
-  }
-  return bundled;
-}
-
+const protocol = bundleModule(
+  await readSource(root, "lib", "protocol.js"),
+  "lib/protocol.js",
+  [],
+);
 const templates = bundleModule(
-  await readSource("ocr", "templates.generated.js"),
+  await readSource(root, "ocr", "templates.generated.js"),
   "ocr/templates.generated.js",
   [],
 );
-const glyph = bundleModule(await readSource("lib", "glyph.js"), "lib/glyph.js", []);
+const glyph = bundleModule(
+  await readSource(root, "lib", "glyph.js"),
+  "lib/glyph.js",
+  [],
+);
 const solver = bundleModule(
-  await readSource("ocr", "solver.js"),
+  await readSource(root, "ocr", "solver.js"),
   "ocr/solver.js",
   ["./templates.generated.js", "../lib/glyph.js"],
 );
 const pageCore = bundleModule(
-  await readSource("lib", "page-core.js"),
+  await readSource(root, "lib", "page-core.js"),
   "lib/page-core.js",
-  [],
+  ["./protocol.js"],
 );
 const trackerHosts = bundleModule(
-  await readSource("lib", "tracker-hosts.js"),
+  await readSource(root, "lib", "tracker-hosts.js"),
   "lib/tracker-hosts.js",
   [],
 );
+const page = await readSource(root, "tampermonkey", "page.js");
 
 const ocrCore = `${templates}\n${glyph}\n${solver}`;
 const workerTail = `
@@ -87,10 +64,9 @@ self.addEventListener("message", (event) => {
 `;
 
 const version = await readVersion(root);
-const header = (await readSource("tampermonkey", "header.js"))
+const header = (await readSource(root, "tampermonkey", "header.js"))
   .trimEnd()
   .replace(/^\/\/ @version\s+.*$/m, `// @version      ${version}`);
-const page = await readSource("tampermonkey", "page.js");
 
 const output = `${header}
 
@@ -99,6 +75,7 @@ const output = `${header}
   const OCR_CORE = ${JSON.stringify(ocrCore)};
   const WORKER_SOURCE = OCR_CORE + ${JSON.stringify(workerTail)};
 
+${protocol}
 ${trackerHosts}
 ${pageCore}
 ${page}

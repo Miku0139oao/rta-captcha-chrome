@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MAX_IMAGE_BYTES,
   hasImageSignature,
   isTrustedSSOPageUrl,
+  parseDeclaredImageLength,
   parsePixelJob,
   validateCaptchaUrl,
 } from "../lib/protocol.js";
@@ -84,4 +86,17 @@ test("image signature validator accepts supported local decode formats", () => {
   );
   assert.equal(hasImageSignature(Uint8Array.from([1, 2, 3, 4])), false);
   assert.equal(hasImageSignature("not bytes"), false);
+});
+
+test("a missing Content-Length is unknown, not an empty response", () => {
+  // The captcha endpoint gzips and omits the header. Treating null as 0 rejected
+  // every captcha fetch, which made the extension silently do nothing.
+  assert.equal(parseDeclaredImageLength(null), null);
+  assert.equal(parseDeclaredImageLength(undefined), null);
+  assert.equal(parseDeclaredImageLength("3623"), 3623);
+  assert.equal(parseDeclaredImageLength(String(MAX_IMAGE_BYTES)), MAX_IMAGE_BYTES);
+
+  for (const rejected of ["0", "-1", "abc", "", String(MAX_IMAGE_BYTES + 1)]) {
+    assert.throws(() => parseDeclaredImageLength(rejected), /length is invalid/, rejected);
+  }
 });
