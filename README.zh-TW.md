@@ -29,6 +29,10 @@ RTA 的驗證碼大約一分鐘後失效，因此：
 
 Violentmonkey、ScriptCat 同樣可安裝這支 `.user.js`。第一次取圖時腳本管理器可能詢問是否允許 RTA 網域，選允許。
 
+> **雙擊沒反應時**，多半是 Chrome 根本沒有執行這支腳本。從 Chrome 138 起，Tampermonkey 必須先開啟「允許使用者指令碼」才會執行：
+> `chrome://extensions` → **篡改猴** → **詳細資料** → 打開「**允許使用者指令碼**」。
+> Tampermonkey 儀表板的「工具」頁也會顯示同樣的提示。這是 Chrome 的設定而不是腳本設定，所以**重裝腳本不會修好**。
+
 目前**尚未上架** Chrome 線上應用程式商店。若要改裝成擴充功能：沒有需要編譯的步驟。倉庫根目錄裡的 `manifest.json` 就是擴充功能；下載後用 Chrome「載入未封裝項目」即可。
 
 ### 方法一：下載 Release zip（不用 git、不用 Node）
@@ -56,6 +60,15 @@ git clone https://github.com/Miku0139oao/rta-captcha-chrome.git
 ```
 
 然後依方法一的第 3–6 步，選 clone 下來的倉庫根目錄（含 `manifest.json` 的那層）。不必執行 `npm install` 或任何 build。
+
+## 疑難排解
+
+| 症狀 | 原因 |
+| --- | --- |
+| 雙擊沒有反應，欄位提示文字也從來沒變 | 腳本沒有在執行。請開啟 Tampermonkey 的「允許使用者指令碼」（見上方）。 |
+| 提示「辨識失敗」 | 辨識信心不足。請自己點一下驗證碼換圖，再雙擊一次。 |
+| 有填入但網站說驗證碼錯誤 | 驗證碼已過期；RTA 只保留約一分鐘。再雙擊一次換新的。 |
+| Network 仍看得到 `logman.rta-os.com` | 只有擴充功能能在網路層阻擋；Tampermonkey 版同樣要求 Chrome 有在執行腳本（第一列）。 |
 
 ## MV3 架構
 

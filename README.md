@@ -24,6 +24,14 @@ The extension also blocks RTA's analytics collector (`logman.rta-os.com`), which
 
 Violentmonkey and ScriptCat can install the same `.user.js`.
 
+> **If nothing happens when you double-click the field**, Chrome is not running the
+> script at all. Since Chrome 138, Tampermonkey only executes userscripts after you
+> enable **Allow User Scripts**:
+> `chrome://extensions` → **Tampermonkey** → **Details** → turn on **Allow User
+> Scripts**. The Tampermonkey dashboard shows the same warning in its Utilities tab.
+> This is a Chrome setting, not a script setting, so reinstalling the script does not
+> fix it.
+
 The extension is **not listed** on the Chrome Web Store. To load it instead, there is **no compile step**: `manifest.json` in the repository root is the extension.
 
 ### Option 1: Release zip (no git, no Node)
@@ -51,6 +59,15 @@ git clone https://github.com/Miku0139oao/rta-captcha-chrome.git
 ```
 
 Then follow steps 3–6 above and select the cloned repository root. Do not run `npm install` or a build; the checkout is already the extension.
+
+## Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| Double-click does nothing, and the captcha field's tooltip never changes | The script is not running. Enable **Allow User Scripts** for Tampermonkey (see above). |
+| Tooltip says "recognition failed" | The OCR was not confident. Click the captcha image yourself and double-click again. |
+| The field is filled but the site rejects the code | The captcha had already expired; RTA keeps one for about a minute. Double-click again to get a fresh one. |
+| `logman.rta-os.com` requests still appear in the Network panel | Only the extension can block them at the network layer; the userscript needs Chrome to be running it (first row). |
 
 ## How it works
 
